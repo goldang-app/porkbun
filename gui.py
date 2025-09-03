@@ -3,19 +3,22 @@ import sys
 import json
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QComboBox, QLabel,
     QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit,
     QSpinBox, QTextEdit, QFileDialog, QMenu, QHeaderView, QSplitter,
     QGroupBox, QCheckBox, QToolBar, QStatusBar, QListWidget, QListWidgetItem,
-    QProgressDialog, QStyledItemDelegate, QProgressBar
+    QProgressDialog, QStyledItemDelegate, QProgressBar, QTabWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QAction, QIcon, QFont, QColor, QKeySequence, QShortcut
 import os
 from dotenv import load_dotenv
 from porkbun_dns import PorkbunDNS, RecordType
+from dashboard_widget import DashboardWidget
+from workers.domain_ns_worker import DomainNSWorker
 
 
 class ApiWorker(QThread):
@@ -39,31 +42,6 @@ class ApiWorker(QThread):
             self.error.emit(str(e))
 
 
-class DomainNSWorker(QThread):
-    """Background worker for checking domain nameservers"""
-    finished = pyqtSignal(dict)  # 도메인별 네임서버 정보
-    
-    def __init__(self, client: PorkbunDNS, domains: list):
-        super().__init__()
-        self.client = client
-        self.domains = domains
-    
-    def run(self):
-        domain_info = {}
-        for domain_name in self.domains:
-            try:
-                nameservers = self.client.get_nameservers(domain_name)
-                is_porkbun = self.client.is_using_porkbun_nameservers(nameservers)
-                domain_info[domain_name] = {
-                    "nameservers": nameservers,
-                    "is_porkbun": is_porkbun
-                }
-            except:
-                domain_info[domain_name] = {
-                    "nameservers": [],
-                    "is_porkbun": True
-                }
-        self.finished.emit(domain_info)
 
 
 class LoginWorker(QThread):
@@ -653,6 +631,9 @@ class DNSManagerGUI(QMainWindow):
         self.domain_info = {}  # Store domain nameserver info
         self.is_logged_in = False
         self.login_worker = None  # 로그인 쓰레드
+        self.dashboard_widget = None  # 대시보드 위젯
+        self.ns_check_worker = None  # 네임서버 체크 워커
+        self.ns_progress_dialog = None  # 진행 표시 대화상자
         self.init_ui()
         self.setup_shortcuts()
         # GUI를 먼저 표시하고 로그인은 사용자가 버튼을 누를 때 수행
@@ -697,6 +678,18 @@ class DNSManagerGUI(QMainWindow):
         login_layout.addStretch()
         main_layout.addLayout(login_layout)
         
+        # Tab widget for dashboard and DNS control
+        self.tab_widget = QTabWidget()
+        
+        # Dashboard tab
+        self.dashboard_widget = DashboardWidget()
+        self.dashboard_widget.domain_selected.connect(self.on_dashboard_domain_selected)
+        self.tab_widget.addTab(self.dashboard_widget, "📊 대시보드")
+        
+        # DNS Control tab
+        dns_control_widget = QWidget()
+        dns_control_layout = QVBoxLayout()
+        
         # Domain selection
         domain_layout = QHBoxLayout()
         domain_layout.addWidget(QLabel("도메인:"))
@@ -718,7 +711,7 @@ class DNSManagerGUI(QMainWindow):
         domain_layout.addWidget(self.refresh_domains_btn)
         
         domain_layout.addStretch()
-        main_layout.addLayout(domain_layout)
+        dns_control_layout.addLayout(domain_layout)
         
         # Records table
         self.records_table = QTableWidget()
@@ -743,7 +736,7 @@ class DNSManagerGUI(QMainWindow):
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         
-        main_layout.addWidget(self.records_table)
+        dns_control_layout.addWidget(self.records_table)
         
         # Buttons
         button_layout = QHBoxLayout()
@@ -772,7 +765,12 @@ class DNSManagerGUI(QMainWindow):
         self.refresh_btn.clicked.connect(self.refresh_current_domain)
         button_layout.addWidget(self.refresh_btn)
         
-        main_layout.addLayout(button_layout)
+        dns_control_layout.addLayout(button_layout)
+        
+        dns_control_widget.setLayout(dns_control_layout)
+        self.tab_widget.addTab(dns_control_widget, "🔧 DNS 컨트롤")
+        
+        main_layout.addWidget(self.tab_widget)
         
         # Status bar
         self.status_bar = QStatusBar()
@@ -856,17 +854,11 @@ class DNSManagerGUI(QMainWindow):
         
         toolbar.addSeparator()
         
-        add_action = QAction("➕ 추가", self)
-        add_action.triggered.connect(self.add_record)
-        toolbar.addAction(add_action)
-        
-        edit_action = QAction("✏️ 수정", self)
-        edit_action.triggered.connect(self.edit_record)
-        toolbar.addAction(edit_action)
-        
-        delete_action = QAction("🗑️ 삭제", self)
-        delete_action.triggered.connect(self.delete_record)
-        toolbar.addAction(delete_action)
+        # 전체 NS 체크 액션 추가
+        self.check_ns_action = QAction("🔍 전체 NS 체크", self)
+        self.check_ns_action.triggered.connect(self.check_all_nameservers)
+        self.check_ns_action.setEnabled(False)  # 로그인 전까지 비활성화
+        toolbar.addAction(self.check_ns_action)
         
         toolbar.addSeparator()
         
@@ -877,6 +869,23 @@ class DNSManagerGUI(QMainWindow):
         export_action = QAction("📥 내보내기", self)
         export_action.triggered.connect(self.export_records)
         toolbar.addAction(export_action)
+    
+    def on_dashboard_domain_selected(self, domain: str):
+        """Handle domain selection from dashboard"""
+        # Switch to DNS control tab
+        self.tab_widget.setCurrentIndex(1)  # DNS 컨트롤 탭
+        
+        # Select domain in combo box
+        for i in range(self.domain_combo.count()):
+            item_data = self.domain_combo.itemData(i)
+            if item_data == domain:
+                self.domain_combo.setCurrentIndex(i)
+                break
+            # Also check text without indicators
+            item_text = self.domain_combo.itemText(i)
+            if domain in item_text:
+                self.domain_combo.setCurrentIndex(i)
+                break
     
     def show_context_menu(self, position):
         """Show context menu for records table"""
@@ -915,6 +924,133 @@ class DNSManagerGUI(QMainWindow):
         self.edit_btn.setEnabled(enabled)
         self.delete_btn.setEnabled(enabled)
         self.refresh_btn.setEnabled(enabled)
+    
+    def check_all_nameservers(self):
+        """Check nameservers for all domains with progress dialog"""
+        if not self.client or not self.is_logged_in:
+            QMessageBox.warning(self, "경고", "먼저 로그인해주세요")
+            return
+        
+        # Get all active domains
+        domains = []
+        for i in range(1, self.domain_combo.count()):
+            domain = self.domain_combo.itemData(i)
+            if domain:
+                domains.append(domain)
+        
+        if not domains:
+            QMessageBox.information(self, "알림", "체크할 도메인이 없습니다")
+            return
+        
+        # Create progress dialog
+        self.ns_progress_dialog = QProgressDialog(
+            "네임서버 체크 중...",
+            "취소",
+            0,
+            len(domains),
+            self
+        )
+        self.ns_progress_dialog.setWindowTitle("네임서버 체크")
+        self.ns_progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.ns_progress_dialog.setAutoClose(False)
+        self.ns_progress_dialog.setAutoReset(False)
+        self.ns_progress_dialog.show()
+        
+        # Disable check action during operation
+        self.check_ns_action.setEnabled(False)
+        self.check_ns_action.setText("🔄 체크 중...")
+        
+        # Create and start worker thread
+        self.ns_check_worker = DomainNSWorker()
+        self.ns_check_worker.set_credentials(
+            self.client.api_key, 
+            self.client.secret_api_key
+        )
+        self.ns_check_worker.progress_updated.connect(self.on_ns_check_progress)
+        self.ns_check_worker.check_completed.connect(self.on_ns_check_completed)
+        self.ns_check_worker.error_occurred.connect(self.on_ns_check_error)
+        
+        # Start check in thread
+        from threading import Thread
+        check_thread = Thread(target=self.ns_check_worker.start_check, args=(domains,))
+        check_thread.daemon = True
+        check_thread.start()
+    
+    def on_ns_check_progress(self, current: int, total: int, message: str):
+        """Handle nameserver check progress updates"""
+        if self.ns_progress_dialog:
+            self.ns_progress_dialog.setValue(current)
+            self.ns_progress_dialog.setLabelText(message)
+            
+            # Check if canceled
+            if self.ns_progress_dialog.wasCanceled():
+                # TODO: Implement cancellation in worker
+                pass
+    
+    def on_ns_check_completed(self, external_ns_domains: list):
+        """Handle nameserver check completion"""
+        # Close progress dialog
+        if self.ns_progress_dialog:
+            self.ns_progress_dialog.close()
+            self.ns_progress_dialog = None
+        
+        # Re-enable action
+        self.check_ns_action.setEnabled(True)
+        self.check_ns_action.setText("🔍 전체 NS 체크")
+        
+        # Update domain info with cached data
+        cached_domains = self.ns_check_worker.get_cached_external_domains()
+        for domain_info in cached_domains:
+            domain = domain_info["domain"]
+            self.domain_info[domain] = {
+                "nameservers": domain_info["nameservers"],
+                "is_porkbun": False
+            }
+        
+        # Show summary
+        if external_ns_domains:
+            summary = f"외부 네임서버를 사용하는 도메인: {len(external_ns_domains)}개\n\n"
+            for item in external_ns_domains[:10]:  # Show first 10
+                domain = item["domain"]
+                ns = item["nameservers"][0] if item["nameservers"] else "Unknown"
+                summary += f"• {domain}: {ns}\n"
+            if len(external_ns_domains) > 10:
+                summary += f"... 외 {len(external_ns_domains) - 10}개"
+            
+            QMessageBox.information(self, "네임서버 체크 완료", summary)
+        else:
+            QMessageBox.information(
+                self,
+                "네임서버 체크 완료",
+                "모든 도메인이 Porkbun 네임서버를 사용하고 있습니다."
+            )
+        
+        # Update dashboard
+        if self.dashboard_widget:
+            self.dashboard_widget.update_domain_info(self.domain_info)
+        
+        # Update domain combo colors
+        self.update_domain_combo_colors()
+    
+    def on_ns_check_error(self, error_msg: str):
+        """Handle nameserver check error"""
+        if self.ns_progress_dialog:
+            self.ns_progress_dialog.close()
+            self.ns_progress_dialog = None
+        
+        self.check_ns_action.setEnabled(True)
+        self.check_ns_action.setText("🔍 전체 NS 체크")
+        
+        QMessageBox.critical(self, "오류", f"네임서버 체크 실패:\n{error_msg}")
+    
+    def update_domain_combo_colors(self):
+        """Update domain combo box colors based on nameserver status"""
+        for i in range(1, self.domain_combo.count()):
+            domain_name = self.domain_combo.itemData(i)
+            if domain_name and domain_name in self.domain_info:
+                if not self.domain_info[domain_name].get("is_porkbun", True):
+                    # 외부 네임서버 사용 시 빨간색
+                    self.domain_combo.setItemData(i, QColor(255, 0, 0), Qt.ItemDataRole.ForegroundRole)
     
     def manage_nameservers(self):
         """Open nameserver management dialog"""
@@ -1002,6 +1138,7 @@ class DNSManagerGUI(QMainWindow):
         # 로그인 성공 시 UI 활성화
         self.domain_combo.setEnabled(True)
         self.refresh_domains_btn.setEnabled(True)
+        self.check_ns_action.setEnabled(True)  # 툴바의 NS 체크 액션 활성화
         self.set_buttons_enabled(False)  # 도메인 선택 전까지는 비활성화
         
         self.status_bar.showMessage("Porkbun API 연결됨", 2000)
@@ -1009,6 +1146,8 @@ class DNSManagerGUI(QMainWindow):
         # 이미 로드된 도메인 목록 처리
         if domains:
             self.process_domains(domains)
+            # 저장된 네임서버 설정 로드
+            self.load_cached_ns_info()
         else:
             # 도메인이 없거나 로드 실패 시 다시 시도
             self.load_domains()
@@ -1024,6 +1163,37 @@ class DNSManagerGUI(QMainWindow):
         QMessageBox.warning(self, "로그인 실패", error_msg)
         # 설정 대화상자 표시
         self.show_settings()
+    
+    def load_cached_ns_info(self):
+        """Load cached nameserver information"""
+        try:
+            # Create worker to load cached info
+            worker = DomainNSWorker()
+            cached_domains = worker.get_cached_external_domains()
+            
+            if cached_domains:
+                # Update domain info with cached data
+                for domain_info in cached_domains:
+                    domain = domain_info["domain"]
+                    self.domain_info[domain] = {
+                        "nameservers": domain_info["nameservers"],
+                        "is_porkbun": False
+                    }
+                
+                # Update UI
+                if self.dashboard_widget:
+                    self.dashboard_widget.update_domain_info(self.domain_info)
+                
+                self.update_domain_combo_colors()
+                
+                # Show status
+                self.status_bar.showMessage(
+                    f"캐시된 네임서버 정보 로드됨: 외부 NS {len(cached_domains)}개 도메인",
+                    3000
+                )
+        except Exception as e:
+            # Silently ignore if no cached data
+            pass
     
     def logout(self):
         """Logout and clear session"""
@@ -1103,28 +1273,25 @@ class DNSManagerGUI(QMainWindow):
         if domain_count > 0:
             self.status_bar.showMessage(f"{domain_count}개 도메인 로드됨", 2000)
             
+            # Update dashboard with domains and initial domain info
+            if self.dashboard_widget:
+                self.dashboard_widget.set_domains(active_domains)
+                # Pass initial domain info (all assumed Porkbun until checked)
+                self.dashboard_widget.update_domain_info(self.domain_info)
+            
             # 백그라운드에서 네임서버 정보 체크 (GUI 차단 없이)
-            if self.client and active_domains:
-                self.ns_worker = DomainNSWorker(self.client, active_domains)
-                self.ns_worker.finished.connect(self.update_domain_info)
-                self.ns_worker.start()
+            # 새로운 DomainNSWorker는 이미 재작성되어 별도 구현이 있음
+            # 기존 체크는 주석 처리 (전체 NS 체크 버튼 사용)
+            # if self.client and active_domains:
+            #     self.ns_worker = DomainNSWorker(self.client, active_domains)
+            #     self.ns_worker.finished.connect(self.update_domain_info)
+            #     self.ns_worker.start()
         else:
             self.status_bar.showMessage("활성 도메인이 없음", 2000)
         
         # Reconnect the signal
         self.domain_combo.currentTextChanged.connect(self.on_domain_changed)
     
-    def update_domain_info(self, domain_info: dict):
-        """Update domain info with nameserver data (from background thread)"""
-        self.domain_info.update(domain_info)
-        
-        # 도메인 콤보박스 색상 업데이트
-        for i in range(1, self.domain_combo.count()):  # 0번은 placeholder
-            domain_name = self.domain_combo.itemData(i)
-            if domain_name and domain_name in domain_info:
-                if not domain_info[domain_name].get("is_porkbun", True):
-                    # 외부 네임서버 사용 시 빨간색
-                    self.domain_combo.setItemData(i, QColor(255, 0, 0), Qt.ItemDataRole.ForegroundRole)
     
     def load_domains(self):
         """Load domains from API"""
