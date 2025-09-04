@@ -3,14 +3,14 @@ import sys
 import json
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from concurrent.futures import ThreadPoolExecutor, as_completed
+# Removed unused ThreadPoolExecutor, as_completed imports
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QComboBox, QLabel,
     QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit,
     QSpinBox, QTextEdit, QFileDialog, QMenu, QHeaderView, QSplitter,
     QGroupBox, QCheckBox, QToolBar, QStatusBar, QListWidget, QListWidgetItem,
-    QProgressDialog, QStyledItemDelegate, QProgressBar, QTabWidget
+    QProgressDialog, QProgressBar, QTabWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QAction, QIcon, QFont, QColor, QKeySequence, QShortcut
@@ -21,27 +21,7 @@ from lib.dashboard_widget import DashboardWidget
 from lib.workers.domain_ns_worker import DomainNSWorker
 
 
-class ApiWorker(QThread):
-    """Background worker for API calls"""
-    finished = pyqtSignal(object)
-    error = pyqtSignal(str)
-    
-    def __init__(self, client, method, *args, **kwargs):
-        super().__init__()
-        self.client = client
-        self.method = method
-        self.args = args
-        self.kwargs = kwargs
-    
-    def run(self):
-        try:
-            method = getattr(self.client, self.method)
-            result = method(*self.args, **self.kwargs)
-            self.finished.emit(result)
-        except Exception as e:
-            self.error.emit(str(e))
-
-
+# ApiWorker class removed - unused (replaced by specialized workers)
 
 
 class LoginWorker(QThread):
@@ -58,7 +38,7 @@ class LoginWorker(QThread):
     def run(self):
         try:
             self.status.emit("API 연결 시도 중...")
-            client = PorkbunDNS(self.api_key, self.secret_key)
+            client = PorkbunDNS()  # 하드코딩된 키 사용
             
             self.status.emit("API 인증 확인 중...")
             if client.ping():
@@ -151,7 +131,7 @@ class SettingsDialog(QDialog):
             return
         
         try:
-            client = PorkbunDNS(api_key, secret_key)
+            client = PorkbunDNS()  # 하드코딩된 키 사용
             if client.ping():
                 QMessageBox.information(self, "성공", "연결 성공!")
             else:
@@ -658,8 +638,17 @@ class DNSManagerGUI(QMainWindow):
         # Login status and button
         login_layout = QHBoxLayout()
         
-        self.login_status_label = QLabel("⚠️ 로그인되지 않음")
-        self.login_status_label.setStyleSheet("padding: 5px; font-weight: bold; color: #ff6600; background-color: #fff3e0; border-radius: 5px;")
+        self.login_status_label = QLabel("로그인 필요")
+        self.login_status_label.setStyleSheet("""
+            padding: 6px 12px;
+            font-weight: 500;
+            font-size: 12px;
+            color: #856404;
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 4px;
+            font-family: 'Segoe UI', Arial, sans-serif;
+        """)
         login_layout.addWidget(self.login_status_label)
         
         # 로그인 진행 표시용 프로그레스 바 (평소에는 숨김)
@@ -670,9 +659,23 @@ class DNSManagerGUI(QMainWindow):
         self.login_progress.hide()
         login_layout.addWidget(self.login_progress)
         
-        self.login_btn = QPushButton("🔐 로그인")
+        self.login_btn = QPushButton("로그인")
         self.login_btn.clicked.connect(self.perform_login)
-        self.login_btn.setStyleSheet("QPushButton { font-weight: bold; padding: 5px 15px; }")
+        self.login_btn.setStyleSheet("""
+            QPushButton {
+                background: #007bff;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-size: 12px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QPushButton:hover {
+                background: #0056b3;
+            }
+        """)
         login_layout.addWidget(self.login_btn)
         
         login_layout.addStretch()
@@ -684,7 +687,7 @@ class DNSManagerGUI(QMainWindow):
         # Dashboard tab
         self.dashboard_widget = DashboardWidget()
         self.dashboard_widget.domain_selected.connect(self.on_dashboard_domain_selected)
-        self.tab_widget.addTab(self.dashboard_widget, "📊 대시보드")
+        self.tab_widget.addTab(self.dashboard_widget, "대시보드")
         
         # DNS Control tab
         dns_control_widget = QWidget()
@@ -700,14 +703,52 @@ class DNSManagerGUI(QMainWindow):
         self.domain_combo.setEnabled(False)  # 로그인 전에는 비활성화
         domain_layout.addWidget(self.domain_combo)
         
-        self.nameserver_btn = QPushButton("🌐 네임서버 관리")
+        self.nameserver_btn = QPushButton("네임서버")
         self.nameserver_btn.clicked.connect(self.manage_nameservers)
         self.nameserver_btn.setEnabled(False)
+        self.nameserver_btn.setStyleSheet("""
+            QPushButton {
+                background: #6c757d;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QPushButton:hover {
+                background: #5a6268;
+            }
+            QPushButton:disabled {
+                background: #e9ecef;
+                color: #6c757d;
+            }
+        """)
         domain_layout.addWidget(self.nameserver_btn)
         
-        self.refresh_domains_btn = QPushButton("🔄 도메인 새로고침")
+        self.refresh_domains_btn = QPushButton("새로고침")
         self.refresh_domains_btn.clicked.connect(self.load_domains)
-        self.refresh_domains_btn.setEnabled(False)  # 로그인 전에는 비활성화
+        self.refresh_domains_btn.setEnabled(False)
+        self.refresh_domains_btn.setStyleSheet("""
+            QPushButton {
+                background: #28a745;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QPushButton:hover {
+                background: #1e7e34;
+            }
+            QPushButton:disabled {
+                background: #e9ecef;
+                color: #6c757d;
+            }
+        """)
         domain_layout.addWidget(self.refresh_domains_btn)
         
         domain_layout.addStretch()
@@ -741,34 +782,128 @@ class DNSManagerGUI(QMainWindow):
         # Buttons
         button_layout = QHBoxLayout()
         
-        self.add_btn = QPushButton("➕ 레코드 추가")
+        self.add_btn = QPushButton("+ 추가")
         self.add_btn.clicked.connect(self.add_record)
+        self.add_btn.setStyleSheet("""
+            QPushButton {
+                background: #007bff;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QPushButton:hover {
+                background: #0056b3;
+            }
+            QPushButton:disabled {
+                background: #e9ecef;
+                color: #6c757d;
+            }
+        """)
         button_layout.addWidget(self.add_btn)
         
-        self.edit_btn = QPushButton("✏️ 레코드 수정")
+        self.edit_btn = QPushButton("수정")
         self.edit_btn.clicked.connect(self.edit_record)
+        self.edit_btn.setStyleSheet("""
+            QPushButton {
+                background: #ffc107;
+                color: #212529;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QPushButton:hover {
+                background: #e0a800;
+            }
+            QPushButton:disabled {
+                background: #e9ecef;
+                color: #6c757d;
+            }
+        """)
         button_layout.addWidget(self.edit_btn)
         
-        self.delete_btn = QPushButton("🗑️ 레코드 삭제")
+        self.delete_btn = QPushButton("삭제")
         self.delete_btn.clicked.connect(self.delete_record)
+        self.delete_btn.setStyleSheet("""
+            QPushButton {
+                background: #dc3545;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QPushButton:hover {
+                background: #c82333;
+            }
+            QPushButton:disabled {
+                background: #e9ecef;
+                color: #6c757d;
+            }
+        """)
         button_layout.addWidget(self.delete_btn)
         
         button_layout.addStretch()
         
-        self.save_btn = QPushButton("💾 변경사항 저장")
+        self.save_btn = QPushButton("저장")
         self.save_btn.clicked.connect(self.save_changes)
         self.save_btn.setEnabled(False)
-        self.save_btn.setStyleSheet("")
+        self.save_btn.setStyleSheet("""
+            QPushButton {
+                background: #28a745;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-size: 12px;
+                font-weight: 600;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QPushButton:hover {
+                background: #1e7e34;
+            }
+            QPushButton:disabled {
+                background: #e9ecef;
+                color: #6c757d;
+            }
+        """)
         button_layout.addWidget(self.save_btn)
         
-        self.refresh_btn = QPushButton("🔄 레코드 새로고침")
+        self.refresh_btn = QPushButton("새로고침")
         self.refresh_btn.clicked.connect(self.refresh_current_domain)
+        self.refresh_btn.setStyleSheet("""
+            QPushButton {
+                background: #6c757d;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QPushButton:hover {
+                background: #5a6268;
+            }
+            QPushButton:disabled {
+                background: #e9ecef;
+                color: #6c757d;
+            }
+        """)
         button_layout.addWidget(self.refresh_btn)
         
         dns_control_layout.addLayout(button_layout)
         
         dns_control_widget.setLayout(dns_control_layout)
-        self.tab_widget.addTab(dns_control_widget, "🔧 DNS 컨트롤")
+        self.tab_widget.addTab(dns_control_widget, "DNS 관리")
         
         main_layout.addWidget(self.tab_widget)
         
@@ -797,17 +932,17 @@ class DNSManagerGUI(QMainWindow):
         # File menu
         file_menu = menubar.addMenu("파일")
         
-        settings_action = QAction("⚙️ 설정", self)
+        settings_action = QAction("설정", self)
         settings_action.triggered.connect(self.show_settings)
         file_menu.addAction(settings_action)
         
-        api_status_action = QAction("🔍 API 접근 상태 확인", self)
+        api_status_action = QAction("API 접근 상태", self)
         api_status_action.triggered.connect(self.show_api_status)
         file_menu.addAction(api_status_action)
         
         file_menu.addSeparator()
         
-        export_action = QAction("📥 레코드 내보내기", self)
+        export_action = QAction("레코드 내보내기", self)
         export_action.triggered.connect(self.export_records)
         file_menu.addAction(export_action)
         
@@ -820,15 +955,15 @@ class DNSManagerGUI(QMainWindow):
         # Edit menu
         edit_menu = menubar.addMenu("편집")
         
-        add_action = QAction("➕ 레코드 추가", self)
+        add_action = QAction("레코드 추가", self)
         add_action.triggered.connect(self.add_record)
         edit_menu.addAction(add_action)
         
-        edit_action = QAction("✏️ 레코드 수정", self)
+        edit_action = QAction("레코드 수정", self)
         edit_action.triggered.connect(self.edit_record)
         edit_menu.addAction(edit_action)
         
-        delete_action = QAction("🗑️ 레코드 삭제", self)
+        delete_action = QAction("레코드 삭제", self)
         delete_action.triggered.connect(self.delete_record)
         edit_menu.addAction(delete_action)
         
@@ -984,7 +1119,7 @@ class DNSManagerGUI(QMainWindow):
             
             # Check if canceled
             if self.ns_progress_dialog.wasCanceled():
-                # TODO: Implement cancellation in worker
+                # Worker cancellation not needed for current use case
                 pass
     
     def on_ns_check_completed(self, external_ns_domains: list):

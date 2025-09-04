@@ -189,7 +189,4 @@ class DomainNSWorker(QObject):
         config = self.load_config()
         return config.get("external_ns_domains", [])
     
-    def is_external_ns_domain(self, domain: str) -> bool:
-        """Check if domain has external nameservers (from cache)"""
-        external_domains = self.get_cached_external_domains()
-        return any(d["domain"] == domain for d in external_domains)
+    # is_external_ns_domain() method removed - unused code

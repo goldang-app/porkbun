@@ -2,8 +2,12 @@
 import json
 import requests
 from typing import Optional, Dict, List, Any
-from dataclasses import dataclass
+# Removed unused dataclass import
 from enum import Enum
+
+# API Keys - 개인용 로컬 프로그램
+API_KEY = "pk1_c0f4e0b1cbc592b54aa9c56a05bd10824f6da9e5ec812ad5c6c2124688437543"
+SECRET_API_KEY = "sk1_b8a48df931d9f078c15d3d13b17b963adc80fe775486b79240c84fd3c4e5edb4"
 
 
 class RecordType(Enum):
@@ -22,32 +26,21 @@ class RecordType(Enum):
     SVCB = "SVCB"
 
 
-@dataclass
-class DNSRecord:
-    """DNS Record data structure"""
-    id: Optional[str] = None
-    name: Optional[str] = None
-    type: Optional[str] = None
-    content: Optional[str] = None
-    ttl: Optional[int] = None
-    prio: Optional[int] = None
-    notes: Optional[str] = None
-
-
+# DNSRecord dataclass removed - unused (app uses plain dictionaries)
 class PorkbunDNS:
     """Porkbun DNS API client"""
     
     BASE_URL = "https://api.porkbun.com/api/json/v3"
     
-    def __init__(self, api_key: str, secret_api_key: str):
+    def __init__(self, api_key: str = None, secret_api_key: str = None):
         """Initialize Porkbun DNS client
         
         Args:
-            api_key: Your Porkbun API key
-            secret_api_key: Your Porkbun secret API key
+            api_key: Your Porkbun API key (optional, uses hardcoded if not provided)
+            secret_api_key: Your Porkbun secret API key (optional, uses hardcoded if not provided)
         """
-        self.api_key = api_key
-        self.secret_api_key = secret_api_key
+        self.api_key = api_key or API_KEY
+        self.secret_api_key = secret_api_key or SECRET_API_KEY
         self.session = requests.Session()
         self.session.headers.update({
             'Content-Type': 'application/json'
@@ -81,11 +74,7 @@ class PorkbunDNS:
             data = {}
         data.update(self._get_auth())
         
-        # 디버그 모드: 네임서버 업데이트 요청일 때 데이터 출력
-        if "updateNs" in endpoint:
-            print(f"[DEBUG] 네임서버 업데이트 요청:")
-            print(f"  URL: {url}")
-            print(f"  데이터: {data}")
+        # Debug logging removed for production (was used for nameserver updates)
         
         try:
             response = self.session.request(
@@ -96,12 +85,9 @@ class PorkbunDNS:
             
             # 500 에러 시 응답 본문 확인
             if response.status_code == 500:
-                print(f"[DEBUG] 500 에러 응답:")
-                print(f"  Status Code: {response.status_code}")
-                print(f"  Headers: {response.headers}")
+                # Debug logging removed for production
                 try:
                     error_body = response.text
-                    print(f"  Response Body: {error_body[:500]}")  # 처음 500자만 출력
                 except:
                     pass
             
@@ -170,40 +156,7 @@ class PorkbunDNS:
         result = self._make_request("POST", "/domain/listAll")
         return result.get("domains", [])
     
-    def get_domain_info(self, domain: str) -> Dict[str, Any]:
-        """Get detailed information about a specific domain
-        
-        Args:
-            domain: Domain name
-            
-        Returns:
-            Domain information including lock status
-        """
-        try:
-            # Porkbun doesn't have a direct domain info endpoint, 
-            # but we can check nameservers to validate domain access
-            nameservers = self.get_nameservers(domain)
-            return {
-                "status": "SUCCESS",
-                "domain": domain,
-                "nameservers": nameservers,
-                "api_access": True
-            }
-        except Exception as e:
-            error_msg = str(e)
-            if "not enabled for API access" in error_msg or "API 접근이 비활성화" in error_msg:
-                return {
-                    "status": "ERROR",
-                    "domain": domain,
-                    "api_access": False,
-                    "error": "API access not enabled"
-                }
-            else:
-                return {
-                    "status": "ERROR", 
-                    "domain": domain,
-                    "error": error_msg
-                }
+    # get_domain_info() method removed - unused code
     
     def check_domain_api_access(self, domain: str) -> bool:
         """Check if domain has API access enabled
@@ -281,8 +234,7 @@ class PorkbunDNS:
             # 500 에러에 대한 상세 메시지 처리
             if "500" in error_msg or "Internal Server Error" in error_msg:
                 # 현재 네임서버 상태 확인 제안
-                print("\n[DEBUG] 네임서버 업데이트 500 에러 발생")
-                print(f"시도한 네임서버: {valid_nameservers}")
+                # Debug logging removed for production
                 
                 raise Exception(f"네임서버 업데이트 실패 (500 Internal Server Error)\n\n"
                               f"입력한 네임서버: {', '.join(valid_nameservers)}\n\n"
@@ -339,23 +291,7 @@ class PorkbunDNS:
         result = self._make_request("POST", f"/dns/retrieve/{domain}")
         return result.get("records", [])
     
-    def get_dns_record_by_type(self, domain: str, record_type: str, subdomain: str = "") -> List[Dict[str, Any]]:
-        """Retrieve DNS records by type and subdomain
-        
-        Args:
-            domain: Domain name
-            record_type: DNS record type (A, CNAME, etc.)
-            subdomain: Subdomain (optional, empty for root)
-            
-        Returns:
-            List of matching DNS records
-        """
-        endpoint = f"/dns/retrieveByNameType/{domain}/{record_type}"
-        if subdomain:
-            endpoint += f"/{subdomain}"
-        
-        result = self._make_request("POST", endpoint)
-        return result.get("records", [])
+    # get_dns_record_by_type() method removed - unused code
     
     def create_dns_record(self, 
                          domain: str,
@@ -433,43 +369,7 @@ class PorkbunDNS:
         
         return self._make_request("POST", f"/dns/edit/{domain}/{record_id}", data)
     
-    def edit_dns_record_by_type(self,
-                                domain: str,
-                                record_type: str,
-                                subdomain: str,
-                                content: str,
-                                ttl: int = 600,
-                                prio: Optional[int] = None,
-                                notes: Optional[str] = None) -> Dict[str, Any]:
-        """Edit DNS records by type and subdomain
-        
-        Args:
-            domain: Domain name
-            record_type: DNS record type
-            subdomain: Subdomain to edit
-            content: New record content
-            ttl: Time to live in seconds
-            prio: Priority (for MX records)
-            notes: Optional notes
-            
-        Returns:
-            API response
-        """
-        endpoint = f"/dns/editByNameType/{domain}/{record_type}"
-        if subdomain:
-            endpoint += f"/{subdomain}"
-        
-        data = {
-            "content": content,
-            "ttl": str(ttl)
-        }
-        
-        if prio is not None:
-            data["prio"] = str(prio)
-        if notes:
-            data["notes"] = notes
-        
-        return self._make_request("POST", endpoint, data)
+    # edit_dns_record_by_type() method removed - unused code
     
     def delete_dns_record(self, domain: str, record_id: str) -> Dict[str, Any]:
         """Delete a DNS record by ID
@@ -483,41 +383,9 @@ class PorkbunDNS:
         """
         return self._make_request("POST", f"/dns/delete/{domain}/{record_id}")
     
-    def delete_dns_record_by_type(self, domain: str, record_type: str, subdomain: str = "") -> Dict[str, Any]:
-        """Delete DNS records by type and subdomain
-        
-        Args:
-            domain: Domain name
-            record_type: DNS record type
-            subdomain: Subdomain (optional)
-            
-        Returns:
-            API response
-        """
-        endpoint = f"/dns/deleteByNameType/{domain}/{record_type}"
-        if subdomain:
-            endpoint += f"/{subdomain}"
-        
-        return self._make_request("POST", endpoint)
+    # delete_dns_record_by_type() method removed - unused code
     
-    def bulk_delete_records(self, domain: str, record_ids: List[str]) -> List[Dict[str, Any]]:
-        """Delete multiple DNS records
-        
-        Args:
-            domain: Domain name
-            record_ids: List of record IDs to delete
-            
-        Returns:
-            List of deletion results
-        """
-        results = []
-        for record_id in record_ids:
-            try:
-                result = self.delete_dns_record(domain, record_id)
-                results.append({"id": record_id, "status": "SUCCESS", "result": result})
-            except Exception as e:
-                results.append({"id": record_id, "status": "ERROR", "error": str(e)})
-        return results
+    # bulk_delete_records() method removed - unused code
     
     def export_dns_records(self, domain: str, format: str = "json") -> str:
         """Export DNS records in various formats

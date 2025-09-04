@@ -9,10 +9,10 @@ from PyQt6.QtWidgets import (
     QScrollArea, QGridLayout, QToolButton, QApplication
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QMimeData, QPoint, QTimer
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QDrag, QColor, QPainter, QBrush, QPen, QFont, QIcon
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QDrag, QColor, QFont
 
 
-class DomainItem(QFrame):
+class DomainItem(QWidget):
     """Custom widget for domain display in groups"""
     clicked = pyqtSignal(str)
     remove_clicked = pyqtSignal(str)  # Signal for remove button
@@ -25,38 +25,54 @@ class DomainItem(QFrame):
         self.setup_ui()
         
     def setup_ui(self):
-        self.setFrameStyle(QFrame.Shape.Box)
+        # 프레임 제거하고 단순한 배경색과 호버 효과만 적용
         self.setStyleSheet("""
             DomainItem {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ffffff, stop:1 #f8f9ff);
-                border: 1px solid #e3e8f0;
-                border-radius: 8px;
-                padding: 8px;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+                background: #ffffff;
+                border: 1px solid #e1e5e9;
+                border-radius: 6px;
+                padding: 4px 8px;
             }
             DomainItem:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #f0f4ff, stop:1 #e8f0ff);
-                border: 1px solid #6b7de8;
-                transform: translateY(-1px);
-                box-shadow: 0 4px 8px rgba(107, 125, 232, 0.15);
+                background: #f0f8ff;
+                border: 1px solid #007bff;
             }
         """)
         
         layout = QHBoxLayout()
-        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(6)
         
         # Domain label with color based on nameserver status
         display_text = self.domain
         if not self.is_porkbun_ns:
-            display_text = f"⚠️ {self.domain}"
+            display_text = f"⚠ {self.domain}"
         
         self.label = QLabel(display_text)
+        # 텍스트 표시 최적화 - 더 넉넉한 공간과 완전한 텍스트 표시
+        self.label.setMinimumWidth(120)
+        self.label.setMaximumWidth(200)
+        self.label.setWordWrap(False)
+        self.label.setTextFormat(Qt.TextFormat.PlainText)
+        
         if self.is_porkbun_ns:
-            self.label.setStyleSheet("font-size: 13px; color: #2c3e50; font-weight: 500;")
+            self.label.setStyleSheet("""
+                font-size: 12px; 
+                color: #2c3e50; 
+                font-weight: 500; 
+                font-family: 'Segoe UI', Arial, sans-serif;
+                background: transparent;
+                border: none;
+            """)
         else:
-            self.label.setStyleSheet("font-size: 13px; color: #e74c3c; font-weight: 600;")
+            self.label.setStyleSheet("""
+                font-size: 12px; 
+                color: #e74c3c; 
+                font-weight: 600; 
+                font-family: 'Segoe UI', Arial, sans-serif;
+                background: transparent;
+                border: none;
+            """)
             self.label.setToolTip("외부 네임서버 사용 중")
         layout.addWidget(self.label)
         
@@ -65,27 +81,20 @@ class DomainItem(QFrame):
         # Remove button (only for grouped domains)
         if self.show_remove:
             self.remove_btn = QToolButton()
-            self.remove_btn.setText("−")  # Minus sign
+            self.remove_btn.setText("×")  # Cross mark
             self.remove_btn.setStyleSheet("""
                 QToolButton {
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 #ff6b75, stop:1 #ff5252);
+                    background: #dc3545;
                     color: white;
                     border: none;
-                    border-radius: 6px;
-                    padding: 4px 8px;
-                    font-size: 12px;
-                    font-weight: 600;
-                    box-shadow: 0 2px 4px rgba(255, 107, 117, 0.3);
+                    border-radius: 2px;
+                    padding: 1px 3px;
+                    font-size: 9px;
+                    font-weight: 500;
+                    font-family: 'Segoe UI', Arial, sans-serif;
                 }
                 QToolButton:hover {
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 #ff4757, stop:1 #ff3742);
-                    box-shadow: 0 4px 8px rgba(255, 107, 117, 0.4);
-                }
-                QToolButton:pressed {
-                    background: #e63946;
-                    box-shadow: 0 1px 2px rgba(255, 107, 117, 0.5);
+                    background: #c82333;
                 }
             """)
             self.remove_btn.setToolTip("미분류로 이동")
@@ -98,24 +107,17 @@ class DomainItem(QFrame):
         self.dns_btn.setText("DNS")
         self.dns_btn.setStyleSheet("""
             QToolButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #5dcea4, stop:1 #4caf50);
+                background: #007bff;
                 color: white;
                 border: none;
-                border-radius: 6px;
-                padding: 4px 8px;
-                font-size: 11px;
-                font-weight: 600;
-                box-shadow: 0 2px 4px rgba(76, 175, 80, 0.3);
+                border-radius: 2px;
+                padding: 1px 4px;
+                font-size: 9px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
             }
             QToolButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #45a049, stop:1 #388e3c);
-                box-shadow: 0 4px 8px rgba(76, 175, 80, 0.4);
-            }
-            QToolButton:pressed {
-                background: #2e7d32;
-                box-shadow: 0 1px 2px rgba(76, 175, 80, 0.5);
+                background: #0056b3;
             }
         """)
         self.dns_btn.setToolTip("DNS 레코드 관리")
@@ -124,8 +126,9 @@ class DomainItem(QFrame):
         layout.addWidget(self.dns_btn)
         
         self.setLayout(layout)
-        self.setMaximumHeight(45)
-        self.setMinimumHeight(45)
+        self.setMaximumHeight(28)
+        self.setMinimumHeight(28)
+        self.setMinimumWidth(200)
         
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -161,27 +164,25 @@ class DomainGroup(QFrame):
         
     def setup_ui(self):
         self.setFrameStyle(QFrame.Shape.Box)
-        self.setMinimumHeight(180)
-        self.setMinimumWidth(280)
-        self.setMaximumWidth(320)
+        self.setMinimumHeight(160)
+        self.setMinimumWidth(240)
+        self.setMaximumWidth(280)
         self.update_style()
         
         layout = QVBoxLayout()
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(6, 6, 6, 6)
         
         # Header
         header_layout = QHBoxLayout()
         
-        # Group name label with icon
-        self.name_label = QLabel(f"📁 {self.name}")
+        # Group name label
+        self.name_label = QLabel(self.name)
         self.name_label.setStyleSheet("""
             font-weight: 600;
-            font-size: 16px;
-            color: #2c3e50;
-            padding: 4px 8px;
-            background: rgba(255, 255, 255, 0.7);
-            border-radius: 6px;
-            margin-bottom: 4px;
+            font-size: 14px;
+            color: #212529;
+            padding: 2px 6px;
+            font-family: 'Segoe UI', Arial, sans-serif;
         """)
         header_layout.addWidget(self.name_label)
         
@@ -189,20 +190,19 @@ class DomainGroup(QFrame):
         
         # Settings button
         self.settings_btn = QToolButton()
-        self.settings_btn.setText("⚙")
+        self.settings_btn.setText("⋯")
         self.settings_btn.setStyleSheet("""
             QToolButton {
                 border: none;
-                font-size: 16px;
-                background: rgba(255, 255, 255, 0.6);
-                border-radius: 6px;
-                padding: 4px;
-                color: #34495e;
+                font-size: 12px;
+                background: transparent;
+                border-radius: 3px;
+                padding: 2px;
+                color: #6c757d;
             }
             QToolButton:hover {
-                background: rgba(255, 255, 255, 0.9);
-                color: #2c3e50;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                background: #e9ecef;
+                color: #495057;
             }
         """)
         self.settings_btn.clicked.connect(self.show_context_menu)
@@ -229,42 +229,36 @@ class DomainGroup(QFrame):
         layout.addWidget(scroll)
         
         # Drop hint label (shown when empty)
-        self.drop_hint = QLabel("🎯\n드래그하여 도메인 추가")
+        self.drop_hint = QLabel("여기에 도메인을 드래그하세요")
         self.drop_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.drop_hint.setStyleSheet("""
-            color: #7f8c8d;
+            color: #6c757d;
             font-style: italic;
-            font-size: 14px;
-            padding: 20px;
-            background: rgba(255, 255, 255, 0.5);
-            border: 2px dashed #bdc3c7;
-            border-radius: 8px;
-            margin: 8px;
+            font-size: 12px;
+            padding: 12px;
+            background: transparent;
+            border: 1px dashed #dee2e6;
+            border-radius: 4px;
+            margin: 4px;
+            font-family: 'Segoe UI', Arial, sans-serif;
         """)
         self.domains_layout.addWidget(self.drop_hint)
         
         self.setLayout(layout)
         
     def update_style(self):
-        # Convert hex color to RGB for gradient
+        # Subtle professional styling
         color = QColor(self.color)
-        r, g, b = color.red(), color.green(), color.blue()
-        
-        # Create lighter and darker variants
-        lighter = QColor(min(255, r + 20), min(255, g + 20), min(255, b + 20))
-        darker = QColor(max(0, r - 10), max(0, g - 10), max(0, b - 10))
         
         self.setStyleSheet(f"""
             DomainGroup {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {lighter.name()}, stop:1 {self.color});
-                border: 2px solid {darker.name()};
-                border-radius: 12px;
-                margin: 4px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+                background: {self.color};
+                border: 1px solid #dee2e6;
+                border-radius: 6px;
+                margin: 2px;
             }}
             DomainGroup:hover {{
-                box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+                border: 1px solid #adb5bd;
             }}
         """)
         
@@ -322,7 +316,7 @@ class DomainGroup(QFrame):
         text, ok = QInputDialog.getText(self, "그룹 이름 변경", "새 이름:", text=self.name)
         if ok and text:
             self.name = text
-            self.name_label.setText(f"📁 {text}")
+            self.name_label.setText(text)
             
     def change_color(self):
         color = QColorDialog.getColor(QColor(self.color), self, "그룹 색상 선택")
@@ -334,18 +328,12 @@ class DomainGroup(QFrame):
         if event.mimeData().hasText():
             event.acceptProposedAction()
             # Highlight during drag
-            color = QColor(self.color)
-            r, g, b = color.red(), color.green(), color.blue()
-            lighter = QColor(min(255, r + 30), min(255, g + 30), min(255, b + 30))
-            
             self.setStyleSheet(f"""
                 DomainGroup {{
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 {lighter.name()}, stop:1 {self.color});
-                    border: 3px solid #4CAF50;
-                    border-radius: 12px;
-                    margin: 4px;
-                    box-shadow: 0 6px 20px rgba(76, 175, 80, 0.3);
+                    background: {self.color};
+                    border: 2px solid #007bff;
+                    border-radius: 6px;
+                    margin: 2px;
                 }}
             """)
             
@@ -374,79 +362,65 @@ class DashboardWidget(QWidget):
         
     def setup_ui(self):
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
         
         # Add background styling to main widget
         self.setStyleSheet("""
             DashboardWidget {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
+                background: #f8f9fa;
+                font-family: 'Segoe UI', Arial, sans-serif;
             }
         """)
         
         # Toolbar
         toolbar_layout = QHBoxLayout()
         
-        self.add_group_btn = QPushButton("➕ 새 그룹")
+        self.add_group_btn = QPushButton("+ 새 그룹")
         self.add_group_btn.setStyleSheet("""
             QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #74b9ff, stop:1 #0984e3);
+                background: #007bff;
                 color: white;
                 border: none;
-                border-radius: 8px;
-                padding: 8px 16px;
-                font-size: 14px;
-                font-weight: 600;
-                box-shadow: 0 3px 6px rgba(116, 185, 255, 0.3);
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
             }
             QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #0984e3, stop:1 #0770d1);
-                box-shadow: 0 4px 8px rgba(116, 185, 255, 0.4);
-            }
-            QPushButton:pressed {
-                background: #0770d1;
-                box-shadow: 0 2px 4px rgba(116, 185, 255, 0.5);
+                background: #0056b3;
             }
         """)
         self.add_group_btn.clicked.connect(self.add_group)
         toolbar_layout.addWidget(self.add_group_btn)
         
         # Status info label
-        self.status_label = QLabel("🔄 대시보드 및 도메인 그룹 관리")
+        self.status_label = QLabel("도메인 관리 대시보드")
         self.status_label.setStyleSheet("""
             color: #6c757d;
-            font-size: 12px;
-            font-style: italic;
-            padding: 4px 8px;
+            font-size: 11px;
+            padding: 2px 6px;
+            font-family: 'Segoe UI', Arial, sans-serif;
         """)
         toolbar_layout.addWidget(self.status_label)
         
         toolbar_layout.addStretch()
         
-        self.save_btn = QPushButton("💾 저장")
+        self.save_btn = QPushButton("저장")
         self.save_btn.setStyleSheet("""
             QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #00b894, stop:1 #00a085);
+                background: #28a745;
                 color: white;
                 border: none;
-                border-radius: 8px;
-                padding: 8px 16px;
-                font-size: 14px;
-                font-weight: 600;
-                box-shadow: 0 3px 6px rgba(0, 184, 148, 0.3);
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
             }
             QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #00a085, stop:1 #008f76);
-                box-shadow: 0 4px 8px rgba(0, 184, 148, 0.4);
-            }
-            QPushButton:pressed {
-                background: #008f76;
-                box-shadow: 0 2px 4px rgba(0, 184, 148, 0.5);
+                background: #1e7e34;
             }
         """)
         self.save_btn.clicked.connect(self.save_config)
@@ -460,27 +434,27 @@ class DashboardWidget(QWidget):
         # Ungrouped domains panel with modern design
         ungrouped_frame = QFrame()
         ungrouped_frame.setFrameStyle(QFrame.Shape.Box)
+        ungrouped_frame.setMinimumWidth(250)
+        ungrouped_frame.setMaximumWidth(350)
         ungrouped_frame.setStyleSheet("""
             QFrame {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #fafbff, stop:1 #f0f2ff);
-                border: 2px solid #d1d9e6;
-                border-radius: 12px;
-                margin: 4px;
+                background: #ffffff;
+                border: 1px solid #dee2e6;
+                border-radius: 6px;
+                margin: 2px;
             }
         """)
         ungrouped_layout = QVBoxLayout()
         
-        ungrouped_label = QLabel("📋 미분류 도메인")
+        ungrouped_label = QLabel("미분류 도메인")
         ungrouped_label.setStyleSheet("""
             font-weight: 600;
-            font-size: 16px;
-            color: #2c3e50;
-            padding: 12px;
-            background: rgba(255, 255, 255, 0.8);
-            border-radius: 8px;
-            margin: 8px;
-            border-bottom: 2px solid #3498db;
+            font-size: 12px;
+            color: #495057;
+            padding: 6px 8px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            font-family: 'Segoe UI', Arial, sans-serif;
         """)
         ungrouped_layout.addWidget(ungrouped_label)
         
@@ -490,26 +464,26 @@ class DashboardWidget(QWidget):
             QScrollArea {
                 border: none;
                 background-color: transparent;
-                border-radius: 8px;
             }
             QScrollBar:vertical {
                 border: none;
-                background: rgba(0,0,0,0.1);
-                width: 8px;
-                border-radius: 4px;
+                background: #f8f9fa;
+                width: 4px;
             }
             QScrollBar::handle:vertical {
-                background: #3498db;
-                border-radius: 4px;
-                min-height: 20px;
+                background: #dee2e6;
+                border-radius: 2px;
+                min-height: 10px;
             }
             QScrollBar::handle:vertical:hover {
-                background: #2980b9;
+                background: #adb5bd;
             }
         """)
         self.ungrouped_container = QWidget()
         self.ungrouped_layout = QVBoxLayout()
         self.ungrouped_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.ungrouped_layout.setSpacing(4)
+        self.ungrouped_layout.setContentsMargins(8, 8, 8, 8)
         self.ungrouped_container.setLayout(self.ungrouped_layout)
         self.ungrouped_scroll.setWidget(self.ungrouped_container)
         ungrouped_layout.addWidget(self.ungrouped_scroll)
@@ -522,37 +496,35 @@ class DashboardWidget(QWidget):
         self.groups_scroll.setWidgetResizable(True)
         self.groups_scroll.setStyleSheet("""
             QScrollArea {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
-                border: 2px solid #dee2e6;
-                border-radius: 12px;
-                margin: 4px;
+                background: #ffffff;
+                border: 1px solid #dee2e6;
+                border-radius: 6px;
+                margin: 2px;
             }
             QScrollBar:horizontal {
                 border: none;
-                background: rgba(0,0,0,0.1);
-                height: 8px;
-                border-radius: 4px;
+                background: #f8f9fa;
+                height: 6px;
             }
             QScrollBar::handle:horizontal {
-                background: #6c757d;
-                border-radius: 4px;
-                min-width: 20px;
+                background: #dee2e6;
+                border-radius: 3px;
+                min-width: 15px;
             }
             QScrollBar::handle:horizontal:hover {
-                background: #495057;
+                background: #adb5bd;
             }
         """)
         self.groups_container = QWidget()
         self.groups_layout = QHBoxLayout()
         self.groups_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.groups_layout.setContentsMargins(12, 12, 12, 12)
-        self.groups_layout.setSpacing(16)
+        self.groups_layout.setContentsMargins(8, 8, 8, 8)
+        self.groups_layout.setSpacing(8)
         self.groups_container.setLayout(self.groups_layout)
         self.groups_scroll.setWidget(self.groups_container)
         self.splitter.addWidget(self.groups_scroll)
         
-        self.splitter.setSizes([200, 800])
+        self.splitter.setSizes([300, 800])
         
         layout.addWidget(self.splitter)
         self.setLayout(layout)
@@ -560,16 +532,16 @@ class DashboardWidget(QWidget):
     def add_group(self):
         text, ok = QInputDialog.getText(self, "새 그룹", "그룹 이름:")
         if ok and text and text not in self.groups:
-            color = QColorDialog.getColor(QColor("#e3f2fd"), self, "그룹 색상 선택")
+            color = QColorDialog.getColor(QColor("#f8f9fa"), self, "그룹 색상 선택")
             if color.isValid():
                 self.create_group(text, color.name())
                 self.save_config()
             else:
                 # Use default color if user cancels color selection
-                self.create_group(text, "#e8f5e8")
+                self.create_group(text, "#f8f9fa")
                 self.save_config()
                 
-    def create_group(self, name: str, color: str = "#e3f2fd"):
+    def create_group(self, name: str, color: str = "#f8f9fa"):
         group = DomainGroup(name, color)
         group.domain_dropped.connect(self.handle_domain_drop)
         group.domain_clicked.connect(self.domain_selected.emit)
@@ -717,10 +689,10 @@ class DashboardWidget(QWidget):
     def load_config(self):
         """Load dashboard configuration"""
         if not self.config_file.exists():
-            # Create default groups with better colors
-            self.create_group("개인", "#e8f5e8")
-            self.create_group("업무", "#fff3e0")
-            self.create_group("프로젝트", "#f3e5f5")
+            # Create default groups with professional colors
+            self.create_group("개인", "#f1f3f4")
+            self.create_group("업무", "#fff2cc")
+            self.create_group("프로젝트", "#fce5cd")
             return
             
         try:
@@ -735,7 +707,7 @@ class DashboardWidget(QWidget):
                 
         except Exception as e:
             QMessageBox.warning(self, "로드 실패", f"설정 로드 실패: {str(e)}")
-            # Create default groups on error with better colors
-            self.create_group("개인", "#e8f5e8")
-            self.create_group("업무", "#fff3e0")
-            self.create_group("프로젝트", "#f3e5f5")
+            # Create default groups on error with professional colors
+            self.create_group("개인", "#f1f3f4")
+            self.create_group("업무", "#fff2cc")
+            self.create_group("프로젝트", "#fce5cd")
