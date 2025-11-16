@@ -36,6 +36,8 @@ class DomainItem(QWidget):
         self._selected = False
         self._base_style = ""
         self._selected_style = ""
+        self._pending_single_select = False
+        self._drag_in_progress = False
         self.setObjectName("domainItem")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setup_ui()
@@ -211,16 +213,35 @@ class DomainItem(QWidget):
         
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            modifiers = event.modifiers()
             if self.selection_enabled:
-                self.selection_requested.emit(self, event.modifiers())
+                if (
+                    modifiers == Qt.KeyboardModifier.NoModifier
+                    and self._selected
+                    and self.selection_provider
+                ):
+                    selected_now = self.selection_provider() or []
+                    if len(selected_now) > 1:
+                        self._pending_single_select = True
+                    else:
+                        self.selection_requested.emit(self, modifiers)
+                        self._pending_single_select = False
+                else:
+                    self.selection_requested.emit(self, modifiers)
+                    self._pending_single_select = False
+            else:
+                self._pending_single_select = False
             self.drag_start_position = event.pos()
-    
+            self._drag_in_progress = False
+        super().mousePressEvent(event)
+
     def mouseMoveEvent(self, event):
         if not (event.buttons() & Qt.MouseButton.LeftButton):
             return
         if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
             return
-            
+        self._drag_in_progress = True
+        self._pending_single_select = False
         drag = QDrag(self)
         mime_data = QMimeData()
         domains_to_drag = [self.domain]
@@ -231,6 +252,18 @@ class DomainItem(QWidget):
         mime_data.setText("\n".join(domains_to_drag))
         drag.setMimeData(mime_data)
         drag.exec(Qt.DropAction.MoveAction)
+
+    def mouseReleaseEvent(self, event):
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.selection_enabled
+            and self._pending_single_select
+            and not self._drag_in_progress
+        ):
+            self.selection_requested.emit(self, Qt.KeyboardModifier.NoModifier)
+        self._pending_single_select = False
+        self._drag_in_progress = False
+        super().mouseReleaseEvent(event)
 
 
 class DomainGroup(QFrame):
