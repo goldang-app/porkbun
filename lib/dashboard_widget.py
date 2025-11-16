@@ -1,7 +1,7 @@
 """Dashboard Widget for Domain Group Management"""
 import json
 from pathlib import Path
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Callable
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QMenu, QMessageBox,
@@ -16,17 +16,31 @@ class DomainItem(QWidget):
     """Custom widget for domain display in groups"""
     clicked = pyqtSignal(str)
     remove_clicked = pyqtSignal(str)  # Signal for remove button
-    
-    def __init__(self, domain: str, show_remove: bool = False, is_porkbun_ns: bool = True, parent=None):
+    selection_requested = pyqtSignal(object, object)
+
+    def __init__(
+        self,
+        domain: str,
+        show_remove: bool = False,
+        is_porkbun_ns: bool = True,
+        selection_enabled: bool = False,
+        selection_provider: Optional[Callable[[], List[str]]] = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.domain = domain
         self.show_remove = show_remove
         self.is_porkbun_ns = is_porkbun_ns
+        self.selection_enabled = selection_enabled
+        self.selection_provider = selection_provider
+        self._selected = False
+        self._base_style = ""
+        self._selected_style = ""
         self.setup_ui()
-        
+
     def setup_ui(self):
         # 프레임 제거하고 단순한 배경색과 호버 효과만 적용
-        self.setStyleSheet("""
+        self._base_style = """
             DomainItem {
                 background: #ffffff;
                 border: 1px solid #e1e5e9;
@@ -37,7 +51,20 @@ class DomainItem(QWidget):
                 background: #f0f8ff;
                 border: 1px solid #007bff;
             }
-        """)
+        """
+        self._selected_style = """
+            DomainItem {
+                background: #e7f1ff;
+                border: 2px solid #5b9bff;
+                border-radius: 6px;
+                padding: 3px 7px;
+            }
+            DomainItem:hover {
+                background: #d7e9ff;
+                border: 2px solid #1c7cd6;
+            }
+        """
+        self._apply_selection_style()
         
         layout = QHBoxLayout()
         layout.setContentsMargins(6, 4, 6, 4)
@@ -153,6 +180,22 @@ class DomainItem(QWidget):
         self.setMinimumHeight(28)
         self.setMinimumWidth(200)
 
+    def _apply_selection_style(self):
+        if self._selected:
+            self.setStyleSheet(self._selected_style)
+        else:
+            self.setStyleSheet(self._base_style)
+
+    def set_selected(self, selected: bool):
+        if not self.selection_enabled:
+            return
+        if self._selected != selected:
+            self._selected = selected
+            self._apply_selection_style()
+
+    def is_selected(self) -> bool:
+        return self._selected
+
     def copy_domain(self):
         """Copy this domain name to clipboard"""
         QApplication.clipboard().setText(self.domain)
@@ -166,6 +209,8 @@ class DomainItem(QWidget):
         
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            if self.selection_enabled:
+                self.selection_requested.emit(self, event.modifiers())
             self.drag_start_position = event.pos()
     
     def mouseMoveEvent(self, event):
@@ -176,7 +221,12 @@ class DomainItem(QWidget):
             
         drag = QDrag(self)
         mime_data = QMimeData()
-        mime_data.setText(self.domain)
+        domains_to_drag = [self.domain]
+        if self.selection_enabled and self.selection_provider:
+            selected_domains = self.selection_provider()
+            if selected_domains and self.domain in selected_domains:
+                domains_to_drag = selected_domains
+        mime_data.setText("\n".join(domains_to_drag))
         drag.setMimeData(mime_data)
         drag.exec(Qt.DropAction.MoveAction)
 
@@ -424,8 +474,14 @@ class DomainGroup(QFrame):
         self.update_style()
         
     def dropEvent(self, event: QDropEvent):
-        domain = event.mimeData().text()
-        self.domain_dropped.emit(domain, self.name)
+        text = event.mimeData().text().strip()
+        domains = [d.strip() for d in text.splitlines() if d.strip()]
+        if not domains:
+            self.update_style()
+            return
+
+        for domain in domains:
+            self.domain_dropped.emit(domain, self.name)
         event.acceptProposedAction()
         self.update_style()
 
@@ -465,6 +521,7 @@ class DashboardWidget(QWidget):
         self.groups = {}  # {group_name: DomainGroup}
         self.all_domains = []
         self.domain_info = {}  # {domain: {"is_porkbun": bool}}
+        self.selection_anchor_domain: Optional[str] = None
         self.dashboard_store_file = Path.home() / ".porkbun_dns" / "dashboard_profiles.json"
         self.legacy_config_file = Path.home() / ".porkbun_dashboard.json"
         self.profile_id = "__default__"
@@ -773,6 +830,7 @@ class DashboardWidget(QWidget):
         for i in range(self.ungrouped_layout.count()):
             widget = self.ungrouped_layout.itemAt(i).widget()
             if isinstance(widget, DomainItem) and widget.domain == domain:
+                self._remove_domain_from_selection(domain)
                 widget.deleteLater()
                 break
         self.update_ungrouped_count()
@@ -791,11 +849,91 @@ class DashboardWidget(QWidget):
         # Check nameserver status
         is_porkbun = self.domain_info.get(domain, {}).get("is_porkbun", True)
         
-        domain_item = DomainItem(domain, show_remove=False, is_porkbun_ns=is_porkbun)
+        domain_item = DomainItem(
+            domain,
+            show_remove=False,
+            is_porkbun_ns=is_porkbun,
+            selection_enabled=True,
+            selection_provider=self.get_selected_ungrouped_domains,
+        )
         domain_item.clicked.connect(self.domain_selected.emit)
+        domain_item.selection_requested.connect(self.handle_ungrouped_selection)
         self.ungrouped_layout.addWidget(domain_item)
         self.update_ungrouped_count()
-        
+
+    def _get_ungrouped_domain_widgets(self) -> List[DomainItem]:
+        widgets: List[DomainItem] = []
+        if not hasattr(self, "ungrouped_layout"):
+            return widgets
+        for i in range(self.ungrouped_layout.count()):
+            widget = self.ungrouped_layout.itemAt(i).widget()
+            if isinstance(widget, DomainItem):
+                widgets.append(widget)
+        return widgets
+
+    def get_selected_ungrouped_domains(self) -> List[str]:
+        return [widget.domain for widget in self._get_ungrouped_domain_widgets() if widget.is_selected()]
+
+    def clear_ungrouped_selection(self):
+        for widget in self._get_ungrouped_domain_widgets():
+            if widget.is_selected():
+                widget.set_selected(False)
+        self.selection_anchor_domain = None
+
+    def _find_ungrouped_index(
+        self,
+        domain: Optional[str],
+        widgets: Optional[List[DomainItem]] = None,
+    ) -> Optional[int]:
+        if not domain:
+            return None
+        widgets = widgets or self._get_ungrouped_domain_widgets()
+        for index, widget in enumerate(widgets):
+            if widget.domain == domain:
+                return index
+        return None
+
+    def handle_ungrouped_selection(self, domain_item: DomainItem, modifiers):
+        widgets = self._get_ungrouped_domain_widgets()
+        if not widgets or domain_item not in widgets:
+            return
+
+        index = widgets.index(domain_item)
+        shift_pressed = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+        additive = bool(
+            modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier)
+        )
+
+        if shift_pressed:
+            anchor_index = self._find_ungrouped_index(self.selection_anchor_domain, widgets)
+            if anchor_index is None:
+                self.selection_anchor_domain = domain_item.domain
+                anchor_index = index
+
+            start = min(anchor_index, index)
+            end = max(anchor_index, index)
+            for i, widget in enumerate(widgets):
+                widget.set_selected(start <= i <= end)
+        elif additive:
+            domain_item.set_selected(not domain_item.is_selected())
+            if domain_item.is_selected():
+                self.selection_anchor_domain = domain_item.domain
+        else:
+            self.clear_ungrouped_selection()
+            domain_item.set_selected(True)
+            self.selection_anchor_domain = domain_item.domain
+
+        selected = self.get_selected_ungrouped_domains()
+        if not selected:
+            self.selection_anchor_domain = None
+        elif self.selection_anchor_domain not in selected:
+            self.selection_anchor_domain = selected[0]
+
+    def _remove_domain_from_selection(self, domain: str):
+        if self.selection_anchor_domain == domain:
+            remaining = [d for d in self.get_selected_ungrouped_domains() if d != domain]
+            self.selection_anchor_domain = remaining[0] if remaining else None
+
     def set_domains(self, domains: List[str]):
         """Set the list of all domains"""
         self.all_domains = domains
@@ -808,6 +946,7 @@ class DashboardWidget(QWidget):
         
     def refresh_domains(self):
         """Refresh domain display based on current grouping"""
+        self.clear_ungrouped_selection()
         # Clear ungrouped
         while self.ungrouped_layout.count():
             item = self.ungrouped_layout.takeAt(0)
