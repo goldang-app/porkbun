@@ -19,7 +19,6 @@ Porkbun DNS 레코드를 관리하기 위한 GUI 기반 Python 애플리케이�
 ### Tempererror & 대량 DNS 템플릿
 - "대량 작업" 탭에서 수십 개 도메인을 체크하고 한 번에 레코드 생성
 - Tempererror SPF 버튼으로 30자 이상의 랜덤 서브도메인 체인을 자동 구성
-- 실행 전에 `/dns/retrieve` 결과를 `backups/YYYYMMDD-HHMM_domain.log`로 JSON 백업
 - 생성된 서브도메인·결과를 토스트 및 로그 영역에서 즉시 확인
 - Tempererror 체인 단계(랜덤 서브도메인 개수)를 1~10 사이에서 직접 지정 가능
 - Tempererror 실행 시 기존 TXT 레코드는 모두 삭제한 뒤 새 체인을 생성하여 충돌을 방지
@@ -89,7 +88,7 @@ python main.py
 4. Tempererror 실행 전 체인 단계(1이면 `_spf` → 최종 ~all 직결, 2 이상이면 랜덤 서브도메인 체인)를 선택합니다.
 5. 마지막 TXT 내용(기본값: `v=spf1 include:_spf.AUTUMNWINDZ.COM ~all`)을 원하는 값으로 입력합니다.
 6. Tempererror를 실행하면 선택한 도메인의 기존 TXT 레코드가 모두 삭제된 뒤 새 체인이 적용됩니다.
-7. 실행 시 자동 백업이 생성되며, 진행 상황과 결과가 하단 로그와 토스트 메시지로 표시됩니다.
+7. 진행 상황과 결과가 하단 로그와 토스트 메시지로 표시됩니다.
 
 ## 📁 프로젝트 구조
 

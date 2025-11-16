@@ -2,9 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
-import json
-from pathlib import Path
 from typing import Callable, List, Dict, Any, Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -22,7 +19,6 @@ class DomainJobResult:
     created_records: List[Dict[str, Any]] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
-    backup_path: str | None = None
     deleted_records: List[Dict[str, Any]] = field(default_factory=list)
 
 
@@ -40,7 +36,6 @@ class BulkDNSWorker(QThread):
         domains: List[str],
         generator: Callable[[str], TemplateResult],
         job_label: str,
-        backup_dir: str | Path = "backups",
         delete_types: Optional[List[str]] = None,
         parent=None,
     ):
@@ -50,18 +45,7 @@ class BulkDNSWorker(QThread):
         self.domains = domains
         self.generator = generator
         self.job_label = job_label
-        self.backup_dir = Path(backup_dir)
         self.delete_types = delete_types or []
-
-    def _ensure_backup_dir(self):
-        self.backup_dir.mkdir(parents=True, exist_ok=True)
-
-    def _write_backup(self, domain: str, records: List[Dict[str, Any]]) -> Path:
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M")
-        backup_path = self.backup_dir / f"{timestamp}_{domain}.log"
-        with open(backup_path, "w", encoding="utf-8") as handle:
-            json.dump(records, handle, ensure_ascii=False, indent=2)
-        return backup_path
 
     def run(self):
         if not self.domains:
@@ -74,17 +58,14 @@ class BulkDNSWorker(QThread):
             self.failed.emit(str(exc))
             return
 
-        self._ensure_backup_dir()
         total = len(self.domains)
         results: List[Dict[str, Any]] = []
 
         for index, domain in enumerate(self.domains, start=1):
             result = DomainJobResult(domain=domain)
             try:
-                self.progress.emit(index - 1, total, f"{domain} 백업 중...")
+                self.progress.emit(index - 1, total, f"{domain} 레코드 조회 중...")
                 records = client.get_dns_records(domain)
-                backup_path = self._write_backup(domain, records)
-                result.backup_path = str(backup_path)
 
                 if self.delete_types:
                     deleted = []

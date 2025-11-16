@@ -219,6 +219,18 @@ class DomainGroup(QFrame):
             font-family: 'Segoe UI', Arial, sans-serif;
         """)
         header_layout.addWidget(self.name_label)
+
+        # Domain count badge
+        self.count_label = QLabel()
+        self.count_label.setStyleSheet("""
+            color: #6c757d;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: #e9ecef;
+            font-family: 'Segoe UI', Arial, sans-serif;
+        """)
+        header_layout.addWidget(self.count_label)
         
         header_layout.addStretch()
 
@@ -307,6 +319,7 @@ class DomainGroup(QFrame):
         
         self.setLayout(layout)
         self.update_copy_button_state()
+        self.update_count_label()
         
     def update_style(self):
         # Subtle professional styling
@@ -337,6 +350,7 @@ class DomainGroup(QFrame):
             domain_item.remove_clicked.connect(self.handle_remove_domain)
             self.domains_layout.addWidget(domain_item)
             self.update_copy_button_state()
+            self.update_count_label()
     
     def handle_remove_domain(self, domain: str):
         """Handle domain removal from group"""
@@ -359,6 +373,11 @@ class DomainGroup(QFrame):
             if not self.domains and hasattr(self, 'drop_hint'):
                 self.drop_hint.show()
         self.update_copy_button_state()
+        self.update_count_label()
+
+    def update_count_label(self):
+        if hasattr(self, "count_label"):
+            self.count_label.setText(f"{len(self.domains)}개")
 
     def show_context_menu(self):
         menu = QMenu(self)
@@ -539,8 +558,8 @@ class DashboardWidget(QWidget):
         """)
         ungrouped_layout = QVBoxLayout()
         
-        ungrouped_label = QLabel("미분류 도메인")
-        ungrouped_label.setStyleSheet("""
+        self.ungrouped_label = QLabel("미분류 도메인")
+        self.ungrouped_label.setStyleSheet("""
             font-weight: 600;
             font-size: 12px;
             color: #495057;
@@ -549,7 +568,7 @@ class DashboardWidget(QWidget):
             border-bottom: 1px solid #dee2e6;
             font-family: 'Segoe UI', Arial, sans-serif;
         """)
-        ungrouped_layout.addWidget(ungrouped_label)
+        ungrouped_layout.addWidget(self.ungrouped_label)
         
         self.ungrouped_scroll = QScrollArea()
         self.ungrouped_scroll.setWidgetResizable(True)
@@ -618,6 +637,7 @@ class DashboardWidget(QWidget):
         self.splitter.addWidget(self.groups_scroll)
 
         self.splitter.setSizes([300, 800])
+        self.update_ungrouped_count()
         layout.addWidget(self.splitter)
         self.setLayout(layout)
 
@@ -755,6 +775,7 @@ class DashboardWidget(QWidget):
             if isinstance(widget, DomainItem) and widget.domain == domain:
                 widget.deleteLater()
                 break
+        self.update_ungrouped_count()
                 
         # Remove from all groups
         for group in self.groups.values():
@@ -773,6 +794,7 @@ class DashboardWidget(QWidget):
         domain_item = DomainItem(domain, show_remove=False, is_porkbun_ns=is_porkbun)
         domain_item.clicked.connect(self.domain_selected.emit)
         self.ungrouped_layout.addWidget(domain_item)
+        self.update_ungrouped_count()
         
     def set_domains(self, domains: List[str]):
         """Set the list of all domains"""
@@ -791,6 +813,7 @@ class DashboardWidget(QWidget):
             item = self.ungrouped_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        self.update_ungrouped_count()
         
         # Refresh all group displays with updated nameserver info
         for group_name, group in self.groups.items():
@@ -803,6 +826,8 @@ class DashboardWidget(QWidget):
             # Re-add domains with updated status
             domains_copy = group.domains.copy()
             group.domains = []
+            group.update_count_label()
+            group.update_copy_button_state()
             
             # Show drop_hint if no domains
             if not domains_copy and hasattr(group, 'drop_hint'):
@@ -822,6 +847,17 @@ class DashboardWidget(QWidget):
         for domain in self.all_domains:
             if domain not in grouped_domains:
                 self.add_ungrouped_domain(domain)
+                
+    def update_ungrouped_count(self):
+        """Update the label showing how many ungrouped domains exist."""
+        if not hasattr(self, "ungrouped_label"):
+            return
+        count = 0
+        for i in range(self.ungrouped_layout.count()):
+            widget = self.ungrouped_layout.itemAt(i).widget()
+            if isinstance(widget, DomainItem):
+                count += 1
+        self.ungrouped_label.setText(f"미분류 도메인 ({count}개)")
                 
     def save_config(self):
         """Save dashboard configuration"""

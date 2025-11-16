@@ -1143,7 +1143,7 @@ class DNSManagerGUI(QMainWindow):
 
         desc_label = QLabel(
             "여러 도메인을 선택한 뒤 한 번에 DNS 레코드를 추가하거나 "
-            "Tempererror SPF 체인을 구성할 수 있습니다. 실행 전마다 모든 레코드가 자동 백업됩니다."
+            "Tempererror SPF 체인을 구성할 수 있습니다."
         )
         desc_label.setWordWrap(True)
         desc_label.setStyleSheet(
@@ -1154,6 +1154,11 @@ class DNSManagerGUI(QMainWindow):
 
         controls_layout = QHBoxLayout()
         controls_layout.addWidget(QLabel("대상 도메인"))
+        self.bulk_selection_label = QLabel("0/0 선택")
+        self.bulk_selection_label.setStyleSheet(
+            "color: #6c757d; font-size: 11px; padding-left: 8px;"
+        )
+        controls_layout.addWidget(self.bulk_selection_label)
         controls_layout.addStretch()
         self.bulk_select_all_btn = QPushButton("전체 선택")
         self.bulk_select_all_btn.clicked.connect(lambda: self.set_bulk_selection(True))
@@ -1169,6 +1174,7 @@ class DNSManagerGUI(QMainWindow):
         self.bulk_domain_list = QListWidget()
         self.bulk_domain_list.setAlternatingRowColors(True)
         self.bulk_domain_list.setStyleSheet("QListWidget { border: 1px solid #ced4da; }")
+        self.bulk_domain_list.itemChanged.connect(self.handle_bulk_item_changed)
         layout.addWidget(self.bulk_domain_list)
 
         # Manual record form
@@ -1437,6 +1443,7 @@ class DNSManagerGUI(QMainWindow):
         for widget in widgets:
             widget.setEnabled(enabled)
         self.tempererror_btn.setEnabled(enabled and self.is_logged_in)
+        self.update_bulk_selection_label()
 
     def populate_bulk_domain_list(self, domains: List[str]):
         """Fill the bulk selection list with available domains."""
@@ -1452,6 +1459,7 @@ class DNSManagerGUI(QMainWindow):
             item.setCheckState(state)
             self.bulk_domain_list.addItem(item)
         self.bulk_domain_list.blockSignals(False)
+        self.update_bulk_selection_label()
         if domains:
             self.bulk_status_label.setText(f"도메인 {len(domains)}개 준비됨")
         else:
@@ -1466,8 +1474,11 @@ class DNSManagerGUI(QMainWindow):
         if not hasattr(self, "bulk_domain_list"):
             return
         state = Qt.CheckState.Checked if select_all else Qt.CheckState.Unchecked
+        self.bulk_domain_list.blockSignals(True)
         for index in range(self.bulk_domain_list.count()):
             self.bulk_domain_list.item(index).setCheckState(state)
+        self.bulk_domain_list.blockSignals(False)
+        self.update_bulk_selection_label()
 
     def get_selected_bulk_domains(self) -> List[str]:
         """Return checked domains from the bulk list."""
@@ -1479,6 +1490,22 @@ class DNSManagerGUI(QMainWindow):
             if item.checkState() == Qt.CheckState.Checked:
                 selected.append(item.text())
         return selected
+
+    def handle_bulk_item_changed(self, _item: QListWidgetItem):
+        """Update selection counter when bulk checkboxes toggle."""
+        self.update_bulk_selection_label()
+
+    def update_bulk_selection_label(self):
+        """Show selected vs total domains near the target label."""
+        if not hasattr(self, "bulk_selection_label"):
+            return
+        total = self.bulk_domain_list.count() if hasattr(self, "bulk_domain_list") else 0
+        selected = 0
+        if hasattr(self, "bulk_domain_list"):
+            for index in range(total):
+                if self.bulk_domain_list.item(index).checkState() == Qt.CheckState.Checked:
+                    selected += 1
+        self.bulk_selection_label.setText(f"{selected}/{total} 선택")
 
     def check_all_nameservers(self):
         """Check nameservers for all domains with progress dialog"""
@@ -1871,6 +1898,7 @@ class DNSManagerGUI(QMainWindow):
         self.active_domains = []
         if hasattr(self, "bulk_domain_list"):
             self.bulk_domain_list.clear()
+            self.update_bulk_selection_label()
         if hasattr(self, "bulk_log"):
             self.bulk_log.clear()
         self.bulk_status_label.setText("대기 중")
@@ -2504,9 +2532,6 @@ class DNSManagerGUI(QMainWindow):
             domain = item.get("domain")
             status = "✅" if item.get("success") else "❌"
             details.append(f"{status} {domain}")
-            backup_path = item.get("backup_path")
-            if backup_path:
-                details.append(f"  백업 파일: {backup_path}")
             deleted_records = item.get("deleted_records", [])
             if deleted_records:
                 details.append(f"  삭제된 TXT {len(deleted_records)}개")
