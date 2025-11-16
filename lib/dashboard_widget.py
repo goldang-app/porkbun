@@ -6,9 +6,9 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QMenu, QMessageBox,
     QInputDialog, QColorDialog, QSplitter, QFrame,
-    QScrollArea, QGridLayout, QToolButton, QApplication
+    QScrollArea, QGridLayout, QToolButton, QApplication, QToolTip
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QMimeData, QPoint, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QMimeData, QPoint, QTimer, QRect
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QDrag, QColor, QFont
 
 
@@ -102,6 +102,29 @@ class DomainItem(QWidget):
             self.remove_btn.clicked.connect(lambda: self.remove_clicked.emit(self.domain))
             layout.addWidget(self.remove_btn)
         
+        # Copy button next to DNS controls
+        self.copy_btn = QToolButton()
+        self.copy_btn.setText("📋")
+        self.copy_btn.setStyleSheet("""
+            QToolButton {
+                background: #17a2b8;
+                color: white;
+                border: none;
+                border-radius: 2px;
+                padding: 1px 4px;
+                font-size: 9px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QToolButton:hover {
+                background: #117a8b;
+            }
+        """)
+        self.copy_btn.setToolTip("도메인 복사")
+        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_btn.clicked.connect(self.copy_domain)
+        layout.addWidget(self.copy_btn)
+
         # DNS control button
         self.dns_btn = QToolButton()
         self.dns_btn.setText("DNS")
@@ -129,6 +152,17 @@ class DomainItem(QWidget):
         self.setMaximumHeight(28)
         self.setMinimumHeight(28)
         self.setMinimumWidth(200)
+
+    def copy_domain(self):
+        """Copy this domain name to clipboard"""
+        QApplication.clipboard().setText(self.domain)
+        QToolTip.showText(
+            self.copy_btn.mapToGlobal(QPoint(0, self.copy_btn.height())),
+            f"복사됨: {self.domain}",
+            self.copy_btn,
+            QRect(),
+            2000,
+        )
         
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -187,6 +221,33 @@ class DomainGroup(QFrame):
         header_layout.addWidget(self.name_label)
         
         header_layout.addStretch()
+
+        # Group-level copy button
+        self.copy_group_btn = QToolButton()
+        self.copy_group_btn.setText("📋")
+        self.copy_group_btn.setStyleSheet("""
+            QToolButton {
+                background: #17a2b8;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                padding: 2px 4px;
+                font-size: 11px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QToolButton:hover {
+                background: #117a8b;
+            }
+            QToolButton:disabled {
+                background: #cfe2f3;
+                color: #6c757d;
+            }
+        """)
+        self.copy_group_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_group_btn.setToolTip("그룹 도메인 전체 복사")
+        self.copy_group_btn.clicked.connect(self.copy_group_domains)
+        header_layout.addWidget(self.copy_group_btn)
         
         # Settings button
         self.settings_btn = QToolButton()
@@ -245,6 +306,7 @@ class DomainGroup(QFrame):
         self.domains_layout.addWidget(self.drop_hint)
         
         self.setLayout(layout)
+        self.update_copy_button_state()
         
     def update_style(self):
         # Subtle professional styling
@@ -274,6 +336,7 @@ class DomainGroup(QFrame):
             domain_item.clicked.connect(self.domain_clicked.emit)
             domain_item.remove_clicked.connect(self.handle_remove_domain)
             self.domains_layout.addWidget(domain_item)
+            self.update_copy_button_state()
     
     def handle_remove_domain(self, domain: str):
         """Handle domain removal from group"""
@@ -295,7 +358,8 @@ class DomainGroup(QFrame):
             # Show drop hint if empty (but make sure drop_hint still exists)
             if not self.domains and hasattr(self, 'drop_hint'):
                 self.drop_hint.show()
-                
+        self.update_copy_button_state()
+
     def show_context_menu(self):
         menu = QMenu(self)
         
@@ -345,6 +409,32 @@ class DomainGroup(QFrame):
         self.domain_dropped.emit(domain, self.name)
         event.acceptProposedAction()
         self.update_style()
+
+    def copy_group_domains(self):
+        """Copy all domains in this group separated by newlines"""
+        if not self.domains:
+            QToolTip.showText(
+                self.copy_group_btn.mapToGlobal(QPoint(0, self.copy_group_btn.height())),
+                "복사할 도메인이 없습니다",
+                self.copy_group_btn,
+                QRect(),
+                2000,
+            )
+            return
+
+        text = "\n".join(self.domains)
+        QApplication.clipboard().setText(text)
+        QToolTip.showText(
+            self.copy_group_btn.mapToGlobal(QPoint(0, self.copy_group_btn.height())),
+            f"{len(self.domains)}개 도메인 복사됨",
+            self.copy_group_btn,
+            QRect(),
+            2000,
+        )
+
+    def update_copy_button_state(self):
+        if hasattr(self, "copy_group_btn"):
+            self.copy_group_btn.setEnabled(bool(self.domains))
 
 
 class DashboardWidget(QWidget):

@@ -759,6 +759,31 @@ class DNSManagerGUI(QMainWindow):
             }
         """)
         domain_layout.addWidget(self.refresh_domains_btn)
+
+        self.copy_domain_btn = QPushButton("복사")
+        self.copy_domain_btn.setToolTip("선택된 도메인을 복사")
+        self.copy_domain_btn.setEnabled(False)
+        self.copy_domain_btn.clicked.connect(self.copy_current_domain)
+        self.copy_domain_btn.setStyleSheet("""
+            QPushButton {
+                background: #17a2b8;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QPushButton:hover {
+                background: #117a8b;
+            }
+            QPushButton:disabled {
+                background: #e9ecef;
+                color: #6c757d;
+            }
+        """)
+        domain_layout.addWidget(self.copy_domain_btn)
         
         domain_layout.addStretch()
         dns_control_layout.addLayout(domain_layout)
@@ -1190,6 +1215,22 @@ class DNSManagerGUI(QMainWindow):
             content = self.records_table.item(current_row, 3).text()
             QApplication.clipboard().setText(content)
             self.status_bar.showMessage(f"복사됨: {content}", 2000)
+
+    def copy_current_domain(self):
+        """Copy the currently selected domain name"""
+        domain = self.current_domain
+        if not domain:
+            current_index = self.domain_combo.currentIndex()
+            if current_index > 0:
+                domain = self.domain_combo.itemData(current_index)
+                if not domain:
+                    domain = self.domain_combo.currentText()
+
+        if domain:
+            QApplication.clipboard().setText(domain)
+            self.status_bar.showMessage(f"도메인 복사됨: {domain}", 2000)
+        else:
+            self.status_bar.showMessage("복사할 도메인이 없습니다", 2000)
     
     def set_buttons_enabled(self, enabled: bool):
         """Enable/disable action buttons"""
@@ -1492,6 +1533,7 @@ class DNSManagerGUI(QMainWindow):
         # 로그인 성공 시 UI 활성화
         self.domain_combo.setEnabled(True)
         self.refresh_domains_btn.setEnabled(True)
+        self.copy_domain_btn.setEnabled(False)
         self.check_ns_action.setEnabled(True)  # 툴바의 NS 체크 액션 활성화
         self.set_buttons_enabled(False)  # 도메인 선택 전까지는 비활성화
         if self.bulk_tab_index is not None:
@@ -1592,6 +1634,7 @@ class DNSManagerGUI(QMainWindow):
         self.domain_combo.setEnabled(False)
         self.domain_combo.clear()
         self.refresh_domains_btn.setEnabled(False)
+        self.copy_domain_btn.setEnabled(False)
         self.nameserver_btn.setEnabled(False)
         self.set_buttons_enabled(False)
         self.records_table.setRowCount(0)
@@ -1721,6 +1764,7 @@ class DNSManagerGUI(QMainWindow):
                 self.current_domain = domain
                 self.set_buttons_enabled(True)
                 self.nameserver_btn.setEnabled(True)
+                self.copy_domain_btn.setEnabled(True)
                 
                 # Show nameserver status in status bar
                 if domain in self.domain_info:
@@ -1740,6 +1784,7 @@ class DNSManagerGUI(QMainWindow):
         self.current_domain = None
         self.set_buttons_enabled(False)
         self.nameserver_btn.setEnabled(False)
+        self.copy_domain_btn.setEnabled(False)
         self.records_table.setRowCount(0)
         if domain_text == "-- 도메인을 선택하세요 --":
             self.status_bar.showMessage("도메인을 선택해주세요", 2000)
