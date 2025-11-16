@@ -446,7 +446,10 @@ class DashboardWidget(QWidget):
         self.groups = {}  # {group_name: DomainGroup}
         self.all_domains = []
         self.domain_info = {}  # {domain: {"is_porkbun": bool}}
-        self.config_file = Path.home() / ".porkbun_dashboard.json"
+        self.dashboard_store_file = Path.home() / ".porkbun_dns" / "dashboard_profiles.json"
+        self.legacy_config_file = Path.home() / ".porkbun_dashboard.json"
+        self.profile_id = "__default__"
+        self.dashboard_store = self._load_store()
         self.setup_ui()
         self.load_config()
         
@@ -613,11 +616,81 @@ class DashboardWidget(QWidget):
         self.groups_container.setLayout(self.groups_layout)
         self.groups_scroll.setWidget(self.groups_container)
         self.splitter.addWidget(self.groups_scroll)
-        
+
         self.splitter.setSizes([300, 800])
-        
         layout.addWidget(self.splitter)
         self.setLayout(layout)
+
+    # ------------------------------------------------------------------
+    # Profile-aware persistence helpers
+    # ------------------------------------------------------------------
+    def _load_store(self) -> Dict[str, Any]:
+        data = {"profiles": {}}
+        if self.dashboard_store_file.exists():
+            try:
+                with open(self.dashboard_store_file, 'r', encoding='utf-8') as f:
+                    loaded = json.load(f)
+                    if isinstance(loaded, dict):
+                        data.update(loaded)
+            except Exception:
+                pass
+
+        if "profiles" not in data or not isinstance(data["profiles"], dict):
+            data["profiles"] = {}
+
+        if not data["profiles"] and self.legacy_config_file.exists():
+            try:
+                with open(self.legacy_config_file, 'r', encoding='utf-8') as f:
+                    legacy = json.load(f)
+                    if isinstance(legacy, dict):
+                        data["profiles"][self.profile_id] = legacy
+                        self._save_store(data)
+            except Exception:
+                pass
+
+        return data
+
+    def _save_store(self, data: Optional[Dict[str, Any]] = None):
+        payload = data or self.dashboard_store
+        self.dashboard_store_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.dashboard_store_file, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+
+    def _ensure_profile_bucket(self):
+        self.dashboard_store.setdefault("profiles", {})
+        self.dashboard_store["profiles"].setdefault(self.profile_id, {})
+
+    def set_profile(self, profile_id: Optional[str]):
+        """Switch dashboard data to a different profile."""
+        new_id = profile_id or "__default__"
+        if new_id == self.profile_id:
+            return
+        self.profile_id = new_id
+        self._ensure_profile_bucket()
+        self.load_config()
+
+    def _clear_groups(self):
+        """Remove all group widgets from layout."""
+        for group in self.groups.values():
+            group.setParent(None)
+            group.deleteLater()
+        self.groups.clear()
+
+        while self.groups_layout.count():
+            item = self.groups_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+    def _create_default_groups(self):
+        """Create default groups when no saved data exists."""
+        default_groups = [
+            ("개인", "#f1f3f4"),
+            ("업무", "#fff2cc"),
+            ("프로젝트", "#fce5cd")
+        ]
+        for name, color in default_groups:
+            self.create_group(name, color)
         
     def add_group(self):
         text, ok = QInputDialog.getText(self, "새 그룹", "그룹 이름:")
@@ -640,6 +713,7 @@ class DashboardWidget(QWidget):
         
         self.groups[name] = group
         self.groups_layout.addWidget(group)
+        return group
         
     def delete_group(self, name: str):
         reply = QMessageBox.question(self, "그룹 삭제", 
@@ -751,19 +825,21 @@ class DashboardWidget(QWidget):
                 
     def save_config(self):
         """Save dashboard configuration"""
-        config = {
+        self._ensure_profile_bucket()
+        profile_entry = {
             "groups": {}
         }
-        
+
         for name, group in self.groups.items():
-            config["groups"][name] = {
+            profile_entry["groups"][name] = {
                 "color": group.color,
                 "domains": group.domains
             }
-            
+
+        self.dashboard_store["profiles"][self.profile_id] = profile_entry
+
         try:
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2, ensure_ascii=False)
+            self._save_store()
         except Exception as e:
             QMessageBox.warning(self, "저장 실패", f"설정 저장 실패: {str(e)}")
             
@@ -777,27 +853,21 @@ class DashboardWidget(QWidget):
                     self.groups[group_name].add_domain(domain, is_porkbun)
     
     def load_config(self):
-        """Load dashboard configuration"""
-        if not self.config_file.exists():
-            # Create default groups with professional colors
-            self.create_group("개인", "#f1f3f4")
-            self.create_group("업무", "#fff2cc")
-            self.create_group("프로젝트", "#fce5cd")
+        """Load dashboard configuration for the current profile."""
+        self._ensure_profile_bucket()
+        profile_data = self.dashboard_store["profiles"].get(self.profile_id, {})
+        groups_data = profile_data.get("groups") if isinstance(profile_data, dict) else None
+
+        self._clear_groups()
+
+        if not groups_data:
+            self._create_default_groups()
+            self.refresh_domains()
             return
-            
-        try:
-            with open(self.config_file, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-                
-            for name, group_data in config.get("groups", {}).items():
-                self.create_group(name, group_data.get("color", "#e3f2fd"))
-                # Load domains for this group after GUI loads
-                if "domains" in group_data:
-                    QTimer.singleShot(100, lambda n=name, d=group_data["domains"]: self.load_group_domains(n, d))
-                
-        except Exception as e:
-            QMessageBox.warning(self, "로드 실패", f"설정 로드 실패: {str(e)}")
-            # Create default groups on error with professional colors
-            self.create_group("개인", "#f1f3f4")
-            self.create_group("업무", "#fff2cc")
-            self.create_group("프로젝트", "#fce5cd")
+
+        for name, group_data in groups_data.items():
+            color = group_data.get("color", "#e3f2fd")
+            group = self.create_group(name, color)
+            group.domains = group_data.get("domains", []).copy()
+
+        self.refresh_domains()

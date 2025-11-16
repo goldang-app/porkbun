@@ -22,6 +22,10 @@ from lib.dashboard_widget import DashboardWidget
 from lib.dns_templates import get_template, TemplateResult
 from lib.workers.bulk_dns_worker import BulkDNSWorker
 from lib.workers.domain_ns_worker import DomainNSWorker
+from lib.profile_manager import ProfileManager
+
+
+load_dotenv()
 
 
 # ApiWorker class removed - unused (replaced by specialized workers)
@@ -41,7 +45,7 @@ class LoginWorker(QThread):
     def run(self):
         try:
             self.status.emit("API 연결 시도 중...")
-            client = PorkbunDNS()  # 하드코딩된 키 사용
+            client = PorkbunDNS(self.api_key, self.secret_key)
             
             self.status.emit("API 인증 확인 중...")
             if client.ping():
@@ -60,103 +64,246 @@ class LoginWorker(QThread):
             self.error.emit(f"연결 실패: {str(e)}")
 
 
-class SettingsDialog(QDialog):
-    """Dialog for API settings"""
-    def __init__(self, parent=None):
+class ProfileEditorDialog(QDialog):
+    """Dialog for creating or editing a profile."""
+
+    def __init__(self, parent=None, *, profile_name: str = "", api_key: str = "", secret_key: str = ""):
         super().__init__(parent)
-        self.setWindowTitle("API 설정")
         self.setModal(True)
-        self.setMinimumWidth(400)
-        
+        self.is_edit = bool(profile_name)
+        self.setWindowTitle("프로필 수정" if self.is_edit else "프로필 추가")
+        self.setMinimumWidth(420)
+
         layout = QVBoxLayout()
-        
-        # Form layout
+
         form_layout = QFormLayout()
-        
-        self.api_key_input = QLineEdit()
-        self.api_key_input.setPlaceholderText("API 키를 입력하세요")
-        form_layout.addRow("API 키:", self.api_key_input)
-        
-        self.secret_key_input = QLineEdit()
+        self.name_input = QLineEdit(profile_name)
+        self.name_input.setPlaceholderText("예: 업무, 개인, 고객A")
+        form_layout.addRow("프로필 이름", self.name_input)
+
+        self.api_key_input = QLineEdit(api_key)
+        self.api_key_input.setPlaceholderText("pk1_ 로 시작하는 API 키")
+        form_layout.addRow("API 키", self.api_key_input)
+
+        self.secret_key_input = QLineEdit(secret_key)
         self.secret_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.secret_key_input.setPlaceholderText("Secret API 키를 입력하세요")
-        form_layout.addRow("Secret API 키:", self.secret_key_input)
-        
+        self.secret_key_input.setPlaceholderText("sk1_ 로 시작하는 Secret 키")
+        form_layout.addRow("Secret 키", self.secret_key_input)
+
         layout.addLayout(form_layout)
-        
-        # Info label
-        info_label = QLabel("API 키 발급: <a href='https://porkbun.com/account/api'>porkbun.com/account/api</a>")
-        info_label.setOpenExternalLinks(True)
-        layout.addWidget(info_label)
-        
-        # Test button
-        self.test_button = QPushButton("연결 테스트")
-        self.test_button.clicked.connect(self.test_connection)
-        layout.addWidget(self.test_button)
-        
-        # Button box
+
+        self.info_label = QLabel("API 키 발급: <a href='https://porkbun.com/account/api'>porkbun.com/account/api</a>")
+        self.info_label.setOpenExternalLinks(True)
+        self.info_label.setStyleSheet("color: #6c757d; font-size: 12px;")
+        layout.addWidget(self.info_label)
+
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        button_box.accepted.connect(self.accept)
+        button_box.button(QDialogButtonBox.StandardButton.Ok).setText("저장")
+        button_box.accepted.connect(self.validate_and_accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
-        
+
         self.setLayout(layout)
-        
-        # Load existing settings
-        self.load_settings()
-    
-    def load_settings(self):
-        """Load existing API settings"""
-        config_file = Path.home() / ".porkbun_dns" / "config.json"
-        if config_file.exists():
-            try:
-                with open(config_file, "r") as f:
-                    config = json.load(f)
-                    self.api_key_input.setText(config.get("api_key", ""))
-                    self.secret_key_input.setText(config.get("secret_api_key", ""))
-            except Exception:
-                pass
-        
-        # Also check environment variables
-        load_dotenv()
-        if os.getenv("PORKBUN_API_KEY"):
-            self.api_key_input.setText(os.getenv("PORKBUN_API_KEY"))
-        if os.getenv("PORKBUN_SECRET_API_KEY"):
-            self.secret_key_input.setText(os.getenv("PORKBUN_SECRET_API_KEY"))
-    
-    def test_connection(self):
-        """Test API connection"""
-        api_key = self.api_key_input.text()
-        secret_key = self.secret_key_input.text()
-        
-        if not api_key or not secret_key:
-            QMessageBox.warning(self, "경고", "두 API 키를 모두 입력해주세요")
+
+        self.ok_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
+        self.name_input.textChanged.connect(self.validate_inputs)
+        self.api_key_input.textChanged.connect(self.validate_inputs)
+        self.secret_key_input.textChanged.connect(self.validate_inputs)
+        self.validate_inputs()
+
+    def validate_inputs(self):
+        has_all = all([
+            self.name_input.text().strip(),
+            self.api_key_input.text().strip(),
+            self.secret_key_input.text().strip()
+        ])
+        self.ok_button.setEnabled(has_all)
+
+    def validate_and_accept(self):
+        if not self.ok_button.isEnabled():
             return
-        
+        self.accept()
+
+    def get_data(self):
+        return {
+            "label": self.name_input.text().strip(),
+            "api_key": self.api_key_input.text().strip(),
+            "secret_key": self.secret_key_input.text().strip()
+        }
+
+
+class ProfileManagerDialog(QDialog):
+    """Dialog that allows users to manage saved profiles."""
+
+    def __init__(self, profile_manager: ProfileManager, parent=None):
+        super().__init__(parent)
+        self.profile_manager = profile_manager
+        self.selected_profile_id = profile_manager.get_active_profile_id()
+        self.setWindowTitle("프로필 관리")
+        self.setMinimumSize(500, 420)
+
+        layout = QVBoxLayout()
+        layout.setSpacing(10)
+
+        description = QLabel("여러 개의 API 프로필을 저장해두고 필요할 때 선택하여 로그인할 수 있습니다.")
+        description.setWordWrap(True)
+        description.setStyleSheet("color: #495057; font-size: 12px;")
+        layout.addWidget(description)
+
+        self.list_widget = QListWidget()
+        self.list_widget.itemSelectionChanged.connect(self._handle_selection_change)
+        layout.addWidget(self.list_widget)
+
+        button_row = QHBoxLayout()
+        self.add_btn = QPushButton("추가")
+        self.add_btn.clicked.connect(self.add_profile)
+        button_row.addWidget(self.add_btn)
+
+        self.edit_btn = QPushButton("수정")
+        self.edit_btn.clicked.connect(self.edit_profile)
+        button_row.addWidget(self.edit_btn)
+
+        self.delete_btn = QPushButton("삭제")
+        self.delete_btn.clicked.connect(self.delete_profile)
+        button_row.addWidget(self.delete_btn)
+
+        self.default_btn = QPushButton("기본 프로필로 설정")
+        self.default_btn.clicked.connect(self.set_default_profile)
+        button_row.addWidget(self.default_btn)
+
+        self.test_btn = QPushButton("연결 테스트")
+        self.test_btn.clicked.connect(self.test_connection)
+        button_row.addWidget(self.test_btn)
+
+        button_row.addStretch()
+        layout.addLayout(button_row)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+        self.setLayout(layout)
+        self.populate_list()
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def populate_list(self):
+        self.list_widget.clear()
+        profiles = self.profile_manager.list_profiles()
+        if not profiles:
+            placeholder = QListWidgetItem("저장된 프로필이 없습니다. '추가' 버튼을 눌러 생성하세요.")
+            placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.list_widget.addItem(placeholder)
+            self.selected_profile_id = None
+            return
+
+        for profile in profiles:
+            label = profile["label"]
+            if profile["id"] == self.profile_manager.get_active_profile_id():
+                label = f"⭐ {label}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, profile["id"])
+            self.list_widget.addItem(item)
+            if profile["id"] == self.selected_profile_id:
+                self.list_widget.setCurrentItem(item)
+
+        if not self.selected_profile_id and profiles:
+            self.list_widget.setCurrentRow(0)
+
+    def get_selected_profile_id(self) -> Optional[str]:
+        current_item = self.list_widget.currentItem()
+        if current_item:
+            return current_item.data(Qt.ItemDataRole.UserRole)
+        return None
+
+    def _handle_selection_change(self):
+        self.selected_profile_id = self.get_selected_profile_id()
+
+    # ------------------------------------------------------------------
+    # Actions
+    # ------------------------------------------------------------------
+    def add_profile(self):
+        dialog = ProfileEditorDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            data = dialog.get_data()
+            profile_id = self.profile_manager.add_profile(
+                data["label"],
+                data["api_key"],
+                data["secret_key"]
+            )
+            self.selected_profile_id = profile_id
+            self.populate_list()
+
+    def edit_profile(self):
+        profile_id = self.get_selected_profile_id()
+        if not profile_id:
+            QMessageBox.information(self, "알림", "수정할 프로필을 선택하세요.")
+            return
+        profile = self.profile_manager.get_profile(profile_id)
+        if not profile:
+            return
+        dialog = ProfileEditorDialog(
+            self,
+            profile_name=profile.get("label", ""),
+            api_key=profile.get("api_key", ""),
+            secret_key=profile.get("secret_api_key", "")
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            data = dialog.get_data()
+            self.profile_manager.update_profile(
+                profile_id,
+                data["label"],
+                data["api_key"],
+                data["secret_key"]
+            )
+            self.populate_list()
+
+    def delete_profile(self):
+        profile_id = self.get_selected_profile_id()
+        if not profile_id:
+            QMessageBox.information(self, "알림", "삭제할 프로필을 선택하세요.")
+            return
+        reply = QMessageBox.question(
+            self,
+            "프로필 삭제",
+            "선택한 프로필을 삭제하시겠습니까?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.profile_manager.delete_profile(profile_id)
+            self.selected_profile_id = self.profile_manager.get_active_profile_id()
+            self.populate_list()
+
+    def set_default_profile(self):
+        profile_id = self.get_selected_profile_id()
+        if not profile_id:
+            QMessageBox.information(self, "알림", "기본으로 지정할 프로필을 선택하세요.")
+            return
+        self.profile_manager.set_active_profile(profile_id)
+        QMessageBox.information(self, "완료", "기본 프로필이 변경되었습니다.")
+        self.selected_profile_id = profile_id
+        self.populate_list()
+
+    def test_connection(self):
+        profile_id = self.get_selected_profile_id()
+        if not profile_id:
+            QMessageBox.information(self, "알림", "테스트할 프로필을 선택하세요.")
+            return
+        profile = self.profile_manager.get_profile(profile_id)
+        if not profile:
+            return
         try:
-            client = PorkbunDNS()  # 하드코딩된 키 사용
+            client = PorkbunDNS(
+                profile.get("api_key"),
+                profile.get("secret_api_key")
+            )
             if client.ping():
-                QMessageBox.information(self, "성공", "연결 성공!")
+                QMessageBox.information(self, "성공", "API 연결 성공")
             else:
-                QMessageBox.warning(self, "실패", "인증 실패")
-        except Exception as e:
-            QMessageBox.critical(self, "오류", f"연결 오류: {str(e)}")
-    
-    def get_credentials(self):
-        """Get the entered credentials"""
-        return self.api_key_input.text(), self.secret_key_input.text()
-    
-    def save_settings(self):
-        """Save settings to config file"""
-        api_key, secret_key = self.get_credentials()
-        if api_key and secret_key:
-            config_file = Path.home() / ".porkbun_dns" / "config.json"
-            config_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(config_file, "w") as f:
-                json.dump({
-                    "api_key": api_key,
-                    "secret_api_key": secret_key
-                }, f, indent=2)
+                QMessageBox.warning(self, "실패", "API 인증 실패")
+        except Exception as exc:
+            QMessageBox.critical(self, "오류", f"연결 오류: {exc}")
 
 
 class RecordDialog(QDialog):
@@ -607,6 +754,10 @@ class DNSManagerGUI(QMainWindow):
     """Main GUI application"""
     def __init__(self):
         super().__init__()
+        self.profile_manager = ProfileManager()
+        self.selected_profile_id = self.profile_manager.get_active_profile_id()
+        self.active_profile_id = None
+        self.logging_in_profile_id = None
         self.client = None
         self.current_domain = None
         self.current_records = []
@@ -667,7 +818,35 @@ class DNSManagerGUI(QMainWindow):
         self.login_progress.setRange(0, 0)  # Indeterminate progress
         self.login_progress.hide()
         login_layout.addWidget(self.login_progress)
-        
+
+        profile_label = QLabel("프로필:")
+        profile_label.setStyleSheet("font-weight: 500; color: #495057;")
+        login_layout.addWidget(profile_label)
+
+        self.profile_combo = QComboBox()
+        self.profile_combo.setMinimumWidth(200)
+        self.profile_combo.currentIndexChanged.connect(self.on_profile_changed)
+        login_layout.addWidget(self.profile_combo)
+
+        self.profile_manage_btn = QPushButton("프로필 관리")
+        self.profile_manage_btn.clicked.connect(self.show_settings)
+        self.profile_manage_btn.setStyleSheet("""
+            QPushButton {
+                background: #6c757d;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: 500;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QPushButton:hover {
+                background: #5a6268;
+            }
+        """)
+        login_layout.addWidget(self.profile_manage_btn)
+
         self.login_btn = QPushButton("로그인")
         self.login_btn.clicked.connect(self.perform_login)
         self.login_btn.setStyleSheet("""
@@ -689,6 +868,9 @@ class DNSManagerGUI(QMainWindow):
         
         login_layout.addStretch()
         main_layout.addLayout(login_layout)
+
+        # 초기 프로필 목록 로드
+        self.refresh_profile_combo(self.selected_profile_id)
         
         # Tab widget for dashboard and DNS control
         self.tab_widget = QTabWidget()
@@ -1434,7 +1616,47 @@ class DNSManagerGUI(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             # Reload domain list to update nameserver status
             self.load_domains()
-    
+
+    def refresh_profile_combo(self, selected_profile_id: Optional[str] = None):
+        """Reload profile dropdown contents."""
+        profiles = self.profile_manager.list_profiles()
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+
+        if not profiles:
+            self.profile_combo.addItem("저장된 프로필이 없습니다", None)
+            self.profile_combo.setEnabled(False)
+            self.selected_profile_id = None
+        else:
+            self.profile_combo.setEnabled(True)
+            target_id = selected_profile_id or self.selected_profile_id or self.profile_manager.get_active_profile_id()
+            for profile in profiles:
+                label = profile["label"]
+                if profile["id"] == self.profile_manager.get_active_profile_id():
+                    label = f"{label} (최근)"
+                self.profile_combo.addItem(label, profile["id"])
+            if target_id:
+                index = self.profile_combo.findData(target_id)
+                if index >= 0:
+                    self.profile_combo.setCurrentIndex(index)
+                else:
+                    self.profile_combo.setCurrentIndex(0)
+            else:
+                self.profile_combo.setCurrentIndex(0)
+            self.selected_profile_id = self.profile_combo.currentData()
+
+        self.profile_combo.blockSignals(False)
+
+    def on_profile_changed(self, index: int):
+        """Handle profile selection change from dropdown."""
+        profile_id = self.profile_combo.itemData(index)
+        if profile_id is None:
+            self.selected_profile_id = None
+            return
+        self.selected_profile_id = profile_id
+        if self.is_logged_in and self.active_profile_id and profile_id != self.active_profile_id:
+            self.status_bar.showMessage("다른 프로필이 선택되었습니다. 전환하려면 로그아웃 후 다시 로그인하세요.", 5000)
+
     def perform_login(self):
         """Perform login with API credentials"""
         if self.is_logged_in:
@@ -1454,32 +1676,30 @@ class DNSManagerGUI(QMainWindow):
             QMessageBox.information(self, "알림", "이미 로그인 중입니다...")
             return
         
-        # Try to load from config first
-        config_file = Path.home() / ".porkbun_dns" / "config.json"
-        
-        # Load from environment or config
-        load_dotenv()
-        api_key = os.getenv("PORKBUN_API_KEY")
-        secret_key = os.getenv("PORKBUN_SECRET_API_KEY")
-        
-        if not api_key and config_file.exists():
-            try:
-                with open(config_file, "r") as f:
-                    config = json.load(f)
-                    api_key = config.get("api_key")
-                    secret_key = config.get("secret_api_key")
-            except Exception:
-                pass
-        
-        if api_key and secret_key:
-            # 저장된 자격증명으로 비동기 로그인
-            self.start_async_login(api_key, secret_key)
-        else:
-            # 설정 대화상자 표시
+        profile_id = self.selected_profile_id or self.profile_manager.get_active_profile_id()
+        if not profile_id:
+            QMessageBox.information(self, "알림", "로그인할 프로필이 없습니다. 먼저 프로필을 추가해주세요.")
             self.show_settings()
-    
-    def start_async_login(self, api_key: str, secret_key: str):
+            return
+
+        profile = self.profile_manager.get_profile(profile_id)
+        if not profile:
+            QMessageBox.warning(self, "경고", "선택한 프로필 정보를 찾을 수 없습니다. 다시 선택해주세요.")
+            self.refresh_profile_combo()
+            return
+
+        api_key = profile.get("api_key")
+        secret_key = profile.get("secret_api_key")
+        if not api_key or not secret_key:
+            QMessageBox.warning(self, "경고", "이 프로필에 API 키 정보가 없습니다. 수정 후 다시 시도하세요.")
+            return
+
+        # 선택된 프로필로 비동기 로그인
+        self.start_async_login(api_key, secret_key, profile_id)
+
+    def start_async_login(self, api_key: str, secret_key: str, profile_id: Optional[str] = None):
         """Start asynchronous login process"""
+        self.logging_in_profile_id = profile_id
         # UI 상태 업데이트
         self.login_status_label.setText("🔄 로그인 중...")
         self.login_status_label.setStyleSheet(
@@ -1517,6 +1737,13 @@ class DNSManagerGUI(QMainWindow):
         """Handle successful login"""
         self.client = client
         self.is_logged_in = True
+        self.active_profile_id = self.logging_in_profile_id or self.selected_profile_id
+        self.logging_in_profile_id = None
+        if self.active_profile_id:
+            self.profile_manager.set_active_profile(self.active_profile_id)
+            self.refresh_profile_combo(self.active_profile_id)
+            if self.dashboard_widget:
+                self.dashboard_widget.set_profile(self.active_profile_id)
         self.login_status_label.setText("✅ 로그인됨")
         # Green background for logged in status
         self.login_status_label.setStyleSheet(
@@ -1553,6 +1780,7 @@ class DNSManagerGUI(QMainWindow):
     
     def on_login_error(self, error_msg: str):
         """Handle login error"""
+        self.logging_in_profile_id = None
         self.login_status_label.setText("⚠️ 로그인되지 않음")
         self.login_status_label.setStyleSheet(
             "padding: 5px; "
@@ -1610,7 +1838,9 @@ class DNSManagerGUI(QMainWindow):
         if self.bulk_worker and self.bulk_worker.isRunning():
             QMessageBox.warning(self, "경고", "대량 작업이 끝난 뒤에 로그아웃할 수 있습니다.")
             return
-        
+
+        self.active_profile_id = None
+        self.logging_in_profile_id = None
         self.client = None
         self.is_logged_in = False
         self.current_domain = None
@@ -1653,13 +1883,10 @@ class DNSManagerGUI(QMainWindow):
         self.status_bar.showMessage("로그아웃됨", 2000)
     
     def show_settings(self):
-        """Show settings dialog"""
-        dialog = SettingsDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            api_key, secret_key = dialog.get_credentials()
-            if api_key and secret_key:
-                dialog.save_settings()  # 설정 저장
-                self.start_async_login(api_key, secret_key)
+        """Open profile management dialog and refresh combo."""
+        dialog = ProfileManagerDialog(self.profile_manager, self)
+        dialog.exec()
+        self.refresh_profile_combo(getattr(dialog, "selected_profile_id", None))
     
     def process_domains(self, domains: list):
         """Process and display domains (called from login thread)"""
