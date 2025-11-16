@@ -1,0 +1,83 @@
+[
+  {
+    "id": "462193074",
+    "name": "*.at1515.xyz",
+    "type": "A",
+    "content": "178.16.143.16",
+    "ttl": "600",
+    "prio": "0",
+    "notes": ""
+  },
+  {
+    "id": "457437844",
+    "name": "at1515.xyz",
+    "type": "A",
+    "content": "178.16.143.16",
+    "ttl": "600",
+    "prio": "0",
+    "notes": ""
+  },
+  {
+    "id": "457437847",
+    "name": "www.at1515.xyz",
+    "type": "A",
+    "content": "178.16.143.16",
+    "ttl": "600",
+    "prio": "0",
+    "notes": ""
+  },
+  {
+    "id": "457428416",
+    "name": "at1515.xyz",
+    "type": "NS",
+    "content": "curitiba.porkbun.com",
+    "ttl": "86400",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "457428415",
+    "name": "at1515.xyz",
+    "type": "NS",
+    "content": "fortaleza.porkbun.com",
+    "ttl": "86400",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "457428413",
+    "name": "at1515.xyz",
+    "type": "NS",
+    "content": "maceio.porkbun.com",
+    "ttl": "86400",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "457428414",
+    "name": "at1515.xyz",
+    "type": "NS",
+    "content": "salvador.porkbun.com",
+    "ttl": "86400",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "482923346",
+    "name": "at1515.xyz",
+    "type": "TXT",
+    "content": "\"v=spf1 ip4:39.7.0.0/16 ip4:106.102.0.0/16 ip4:118.235.0.0/16 ip4:211.246.0.0/16 ip4:211.36.0.0/16  ip4:222.96.0.0/16 ip4:175.223.0.0/16 ~all\"",
+    "ttl": "600",
+    "prio": "0",
+    "notes": ""
+  },
+  {
+    "id": "462192982",
+    "name": "_acme-challenge.at1515.xyz",
+    "type": "TXT",
+    "content": "i0YW_VNKTRlhZZ_l_4bFBLPQvYltXTRDOEwbwDe2n4c",
+    "ttl": "600",
+    "prio": "0",
+    "notes": ""
+  }
+]

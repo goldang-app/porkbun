@@ -2,7 +2,8 @@
 import sys
 import json
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from datetime import datetime
+from typing import Optional, List, Dict, Any, Callable
 # Removed unused ThreadPoolExecutor, as_completed imports
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -18,6 +19,8 @@ import os
 from dotenv import load_dotenv
 from lib.porkbun_dns import PorkbunDNS, RecordType
 from lib.dashboard_widget import DashboardWidget
+from lib.dns_templates import get_template, TemplateResult
+from lib.workers.bulk_dns_worker import BulkDNSWorker
 from lib.workers.domain_ns_worker import DomainNSWorker
 
 
@@ -614,6 +617,12 @@ class DNSManagerGUI(QMainWindow):
         self.dashboard_widget = None  # 대시보드 위젯
         self.ns_check_worker = None  # 네임서버 체크 워커
         self.ns_progress_dialog = None  # 진행 표시 대화상자
+        self.bulk_worker = None  # 대량 DNS 작업자
+        self.bulk_job_label = ""
+        self.toast_label = None
+        self.active_domains: List[str] = []
+        self.bulk_tab_index = None
+        self.default_tempererror_final = "v=spf1 include:_spf.AUTUMNWINDZ.COM ~all"
         self.init_ui()
         self.setup_shortcuts()
         # GUI를 먼저 표시하고 로그인은 사용자가 버튼을 누를 때 수행
@@ -904,17 +913,146 @@ class DNSManagerGUI(QMainWindow):
         
         dns_control_widget.setLayout(dns_control_layout)
         self.tab_widget.addTab(dns_control_widget, "DNS 관리")
-        
+
+        # Bulk operations tab (disabled until login 완료)
+        self.bulk_tab = self.create_bulk_operations_tab()
+        self.bulk_tab_index = self.tab_widget.addTab(self.bulk_tab, "대량 작업")
+        self.tab_widget.setTabEnabled(self.bulk_tab_index, False)
+
         main_layout.addWidget(self.tab_widget)
-        
+
         # Status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("준비됨")
-        
+
         # Initially disable buttons
         self.set_buttons_enabled(False)
-    
+
+    def create_bulk_operations_tab(self) -> QWidget:
+        """Create tab contents for bulk DNS operations."""
+        bulk_widget = QWidget()
+        layout = QVBoxLayout()
+
+        desc_label = QLabel(
+            "여러 도메인을 선택한 뒤 한 번에 DNS 레코드를 추가하거나 "
+            "Tempererror SPF 체인을 구성할 수 있습니다. 실행 전마다 모든 레코드가 자동 백업됩니다."
+        )
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet(
+            "background: #f8f9fa; border: 1px solid #e1e5ea; border-radius: 6px;"
+            "padding: 10px; color: #495057;"
+        )
+        layout.addWidget(desc_label)
+
+        controls_layout = QHBoxLayout()
+        controls_layout.addWidget(QLabel("대상 도메인"))
+        controls_layout.addStretch()
+        self.bulk_select_all_btn = QPushButton("전체 선택")
+        self.bulk_select_all_btn.clicked.connect(lambda: self.set_bulk_selection(True))
+        controls_layout.addWidget(self.bulk_select_all_btn)
+        self.bulk_clear_selection_btn = QPushButton("선택 해제")
+        self.bulk_clear_selection_btn.clicked.connect(lambda: self.set_bulk_selection(False))
+        controls_layout.addWidget(self.bulk_clear_selection_btn)
+        self.bulk_refresh_list_btn = QPushButton("목록 동기화")
+        self.bulk_refresh_list_btn.clicked.connect(self.sync_bulk_domain_list)
+        controls_layout.addWidget(self.bulk_refresh_list_btn)
+        layout.addLayout(controls_layout)
+
+        self.bulk_domain_list = QListWidget()
+        self.bulk_domain_list.setAlternatingRowColors(True)
+        self.bulk_domain_list.setStyleSheet("QListWidget { border: 1px solid #ced4da; }")
+        layout.addWidget(self.bulk_domain_list)
+
+        # Manual record form
+        custom_group = QGroupBox("수동 DNS 레코드 추가")
+        custom_group_layout = QVBoxLayout()
+        form_layout = QFormLayout()
+
+        self.bulk_record_type_combo = QComboBox()
+        self.bulk_record_type_combo.addItems([rt.value for rt in RecordType])
+        self.bulk_record_type_combo.currentTextChanged.connect(self.on_bulk_record_type_changed)
+        form_layout.addRow("레코드 타입:", self.bulk_record_type_combo)
+
+        self.bulk_name_input = QLineEdit()
+        self.bulk_name_input.setPlaceholderText("@ 또는 서브도메인 (예: mail)")
+        form_layout.addRow("서브도메인:", self.bulk_name_input)
+
+        self.bulk_value_input = QLineEdit()
+        self.bulk_value_input.setPlaceholderText("DNS 값 (예: 192.0.2.1, cname.target.com, v=spf1 ...)")
+        form_layout.addRow("값:", self.bulk_value_input)
+
+        self.bulk_ttl_input = QSpinBox()
+        self.bulk_ttl_input.setRange(600, 86400)
+        self.bulk_ttl_input.setSingleStep(300)
+        self.bulk_ttl_input.setValue(600)
+        form_layout.addRow("TTL (초):", self.bulk_ttl_input)
+
+        self.bulk_priority_label = QLabel("우선순위:")
+        self.bulk_priority_input = QSpinBox()
+        self.bulk_priority_input.setRange(0, 65535)
+        form_layout.addRow(self.bulk_priority_label, self.bulk_priority_input)
+
+        custom_group_layout.addLayout(form_layout)
+
+        self.bulk_apply_btn = QPushButton("선택 도메인에 적용")
+        self.bulk_apply_btn.clicked.connect(self.handle_bulk_apply_clicked)
+        self.bulk_apply_btn.setStyleSheet("padding: 6px 14px; font-weight: 600;")
+        custom_group_layout.addWidget(self.bulk_apply_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        custom_group.setLayout(custom_group_layout)
+        layout.addWidget(custom_group)
+
+        # Tempererror template group
+        temper_group = QGroupBox("Tempererror SPF 자동 구성")
+        temper_layout = QVBoxLayout()
+        temper_desc = QLabel(
+            "Cloudflare Tempererror 방식의 TXT 체인을 생성합니다. "
+            "체인에 사용되는 30자 이상의 랜덤 서브도메인이 자동으로 만들어집니다."
+        )
+        temper_desc.setWordWrap(True)
+        temper_layout.addWidget(temper_desc)
+        chain_layout = QHBoxLayout()
+        chain_layout.addWidget(QLabel("체인 단계 수:"))
+        self.tempererror_chain_spin = QSpinBox()
+        self.tempererror_chain_spin.setRange(1, 10)
+        self.tempererror_chain_spin.setValue(4)
+        self.tempererror_chain_spin.setToolTip("1단계는 _spf에서 바로 최종 ~all 레코드로 연결됩니다.")
+        chain_layout.addWidget(self.tempererror_chain_spin)
+        chain_layout.addStretch()
+        temper_layout.addLayout(chain_layout)
+        final_layout = QFormLayout()
+        self.tempererror_final_input = QLineEdit()
+        self.tempererror_final_input.setPlaceholderText("최종 SPF 내용 (예: v=spf1 include:_spf.AUTUMNWINDZ.COM ~all)")
+        self.tempererror_final_input.setText(self.default_tempererror_final)
+        final_layout.addRow("최종 SPF:", self.tempererror_final_input)
+        temper_layout.addLayout(final_layout)
+        self.tempererror_btn = QPushButton("Tempererror 체인 생성")
+        self.tempererror_btn.clicked.connect(self.apply_tempererror_template)
+        self.tempererror_btn.setStyleSheet("padding: 6px 14px; background: #6f42c1; color: white;")
+        temper_layout.addWidget(self.tempererror_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        temper_group.setLayout(temper_layout)
+        layout.addWidget(temper_group)
+
+        # Progress + status
+        progress_layout = QHBoxLayout()
+        self.bulk_status_label = QLabel("대기 중")
+        progress_layout.addWidget(self.bulk_status_label)
+        self.bulk_progress_bar = QProgressBar()
+        self.bulk_progress_bar.setRange(0, 1)
+        self.bulk_progress_bar.setValue(0)
+        progress_layout.addWidget(self.bulk_progress_bar)
+        layout.addLayout(progress_layout)
+
+        self.bulk_log = QTextEdit()
+        self.bulk_log.setReadOnly(True)
+        self.bulk_log.setPlaceholderText("대량 작업 로그가 여기에 표시됩니다.")
+        layout.addWidget(self.bulk_log)
+
+        bulk_widget.setLayout(layout)
+        self.on_bulk_record_type_changed(self.bulk_record_type_combo.currentText())
+        self.set_bulk_controls_enabled(False)
+        return bulk_widget
+
     def setup_shortcuts(self):
         """Setup keyboard shortcuts"""
         # Ctrl+S for save
@@ -1059,7 +1197,66 @@ class DNSManagerGUI(QMainWindow):
         self.edit_btn.setEnabled(enabled)
         self.delete_btn.setEnabled(enabled)
         self.refresh_btn.setEnabled(enabled)
-    
+
+    def set_bulk_controls_enabled(self, enabled: bool):
+        """Enable or disable bulk-operation widgets."""
+        if not hasattr(self, "bulk_domain_list"):
+            return
+        widgets = [
+            self.bulk_domain_list,
+            self.bulk_select_all_btn,
+            self.bulk_clear_selection_btn,
+            self.bulk_refresh_list_btn,
+            self.bulk_apply_btn,
+            self.tempererror_chain_spin,
+            self.tempererror_final_input,
+        ]
+        for widget in widgets:
+            widget.setEnabled(enabled)
+        self.tempererror_btn.setEnabled(enabled and self.is_logged_in)
+
+    def populate_bulk_domain_list(self, domains: List[str]):
+        """Fill the bulk selection list with available domains."""
+        if not hasattr(self, "bulk_domain_list"):
+            return
+        previous_selection = set(self.get_selected_bulk_domains())
+        self.bulk_domain_list.blockSignals(True)
+        self.bulk_domain_list.clear()
+        for domain in sorted(domains):
+            item = QListWidgetItem(domain)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            state = Qt.CheckState.Checked if domain in previous_selection else Qt.CheckState.Unchecked
+            item.setCheckState(state)
+            self.bulk_domain_list.addItem(item)
+        self.bulk_domain_list.blockSignals(False)
+        if domains:
+            self.bulk_status_label.setText(f"도메인 {len(domains)}개 준비됨")
+        else:
+            self.bulk_status_label.setText("도메인 없음")
+
+    def sync_bulk_domain_list(self):
+        """Refresh the bulk domain list from the latest active domains."""
+        self.populate_bulk_domain_list(self.active_domains)
+
+    def set_bulk_selection(self, select_all: bool):
+        """Select or deselect all domains in the bulk list."""
+        if not hasattr(self, "bulk_domain_list"):
+            return
+        state = Qt.CheckState.Checked if select_all else Qt.CheckState.Unchecked
+        for index in range(self.bulk_domain_list.count()):
+            self.bulk_domain_list.item(index).setCheckState(state)
+
+    def get_selected_bulk_domains(self) -> List[str]:
+        """Return checked domains from the bulk list."""
+        if not hasattr(self, "bulk_domain_list"):
+            return []
+        selected = []
+        for index in range(self.bulk_domain_list.count()):
+            item = self.bulk_domain_list.item(index)
+            if item.checkState() == Qt.CheckState.Checked:
+                selected.append(item.text())
+        return selected
+
     def check_all_nameservers(self):
         """Check nameservers for all domains with progress dialog"""
         if not self.client or not self.is_logged_in:
@@ -1297,7 +1494,10 @@ class DNSManagerGUI(QMainWindow):
         self.refresh_domains_btn.setEnabled(True)
         self.check_ns_action.setEnabled(True)  # 툴바의 NS 체크 액션 활성화
         self.set_buttons_enabled(False)  # 도메인 선택 전까지는 비활성화
-        
+        if self.bulk_tab_index is not None:
+            self.tab_widget.setTabEnabled(self.bulk_tab_index, True)
+        self.set_bulk_controls_enabled(True)
+
         self.status_bar.showMessage("Porkbun API 연결됨", 2000)
         
         # 이미 로드된 도메인 목록 처리
@@ -1364,6 +1564,10 @@ class DNSManagerGUI(QMainWindow):
         if self.login_worker and self.login_worker.isRunning():
             self.login_worker.terminate()
             self.login_worker.wait()
+
+        if self.bulk_worker and self.bulk_worker.isRunning():
+            QMessageBox.warning(self, "경고", "대량 작업이 끝난 뒤에 로그아웃할 수 있습니다.")
+            return
         
         self.client = None
         self.is_logged_in = False
@@ -1391,7 +1595,18 @@ class DNSManagerGUI(QMainWindow):
         self.nameserver_btn.setEnabled(False)
         self.set_buttons_enabled(False)
         self.records_table.setRowCount(0)
-        
+        self.active_domains = []
+        if hasattr(self, "bulk_domain_list"):
+            self.bulk_domain_list.clear()
+        if hasattr(self, "bulk_log"):
+            self.bulk_log.clear()
+        self.bulk_status_label.setText("대기 중")
+        self.bulk_progress_bar.setRange(0, 1)
+        self.bulk_progress_bar.setValue(0)
+        self.set_bulk_controls_enabled(False)
+        if self.bulk_tab_index is not None:
+            self.tab_widget.setTabEnabled(self.bulk_tab_index, False)
+
         self.status_bar.showMessage("로그아웃됨", 2000)
     
     def show_settings(self):
@@ -1407,6 +1622,7 @@ class DNSManagerGUI(QMainWindow):
         """Process and display domains (called from login thread)"""
         # Save current selection
         current_selection = self.current_domain
+        selection_restored = False
         
         # Temporarily disconnect the signal to prevent auto-loading
         if self.domain_combo.receivers(self.domain_combo.currentTextChanged) > 0:
@@ -1438,7 +1654,11 @@ class DNSManagerGUI(QMainWindow):
             index = self.domain_combo.findText(current_selection)
             if index >= 0:
                 self.domain_combo.setCurrentIndex(index)
+                selection_restored = True
         
+        self.active_domains = active_domains
+        self.populate_bulk_domain_list(active_domains)
+
         if domain_count > 0:
             self.status_bar.showMessage(f"{domain_count}개 도메인 로드됨", 2000)
             
@@ -1460,6 +1680,16 @@ class DNSManagerGUI(QMainWindow):
         
         # Reconnect the signal
         self.domain_combo.currentTextChanged.connect(self.on_domain_changed)
+
+        # When 도메인 목록을 새로 불러오면 현재 선택된 도메인의 레코드도 강제 갱신해준다
+        if selection_restored:
+            self.on_domain_changed(self.domain_combo.currentText())
+        elif current_selection:
+            # 기존에 선택했던 도메인이 사라진 경우 UI 상태를 정리한다
+            self.current_domain = None
+            self.set_buttons_enabled(False)
+            self.nameserver_btn.setEnabled(False)
+            self.records_table.setRowCount(0)
     
     
     def load_domains(self):
@@ -1873,6 +2103,207 @@ class DNSManagerGUI(QMainWindow):
             self.load_records()
         
         self.status_bar.showMessage(f"{success_count}개 레코드 저장됨", 2000)
+
+    def on_bulk_record_type_changed(self, record_type: str):
+        """Toggle priority field visibility for bulk form."""
+        show_priority = record_type in ["MX", "SRV"]
+        self.bulk_priority_label.setVisible(show_priority)
+        self.bulk_priority_input.setVisible(show_priority)
+
+    def handle_bulk_apply_clicked(self):
+        """Apply manual bulk DNS addition based on form input."""
+        if not self.client or not self.is_logged_in:
+            QMessageBox.warning(self, "경고", "먼저 로그인해주세요")
+            return
+        domains = self.get_selected_bulk_domains()
+        if not domains:
+            QMessageBox.warning(self, "경고", "적용할 도메인을 최소 1개 이상 선택하세요")
+            return
+
+        record_type = self.bulk_record_type_combo.currentText()
+        content = self.bulk_value_input.text().strip()
+        if not content:
+            QMessageBox.warning(self, "경고", "값을 입력하세요")
+            return
+
+        name_input = self.bulk_name_input.text().strip()
+        normalized_name = "" if name_input in ("", "@") else name_input
+        ttl = max(self.bulk_ttl_input.value(), 600)
+        prio = self.bulk_priority_input.value() if record_type in ["MX", "SRV"] else None
+
+        def expand_tokens(value: str, domain: str) -> str:
+            return value.replace("{domain}", domain)
+
+        def generator(domain: str) -> TemplateResult:
+            applied_name = expand_tokens(normalized_name, domain) if normalized_name else ""
+            applied_content = expand_tokens(content, domain)
+            record = {
+                "type": record_type,
+                "name": applied_name,
+                "content": applied_content,
+                "ttl": ttl,
+                "notes": "Bulk custom entry",
+            }
+            if prio is not None:
+                record["prio"] = prio
+            metadata = {
+                "template": "manual",
+                "record_type": record_type,
+                "custom_name": applied_name or "@",
+                "custom_content": applied_content,
+            }
+            return TemplateResult(records=[record], metadata=metadata)
+
+        job_label = f"{record_type} 레코드 추가"
+        self.start_bulk_job(domains, generator, job_label)
+
+    def apply_tempererror_template(self):
+        """Trigger Tempererror template for selected domains."""
+        if not self.client or not self.is_logged_in:
+            QMessageBox.warning(self, "경고", "먼저 로그인해주세요")
+            return
+        domains = self.get_selected_bulk_domains()
+        if not domains:
+            QMessageBox.warning(self, "경고", "Tempererror를 적용할 도메인을 선택하세요")
+            return
+        template = get_template("tempererror")
+        if not template:
+            QMessageBox.critical(self, "오류", "Tempererror 템플릿을 찾을 수 없습니다")
+            return
+        chain_depth = self.tempererror_chain_spin.value()
+        final_content = self.tempererror_final_input.text().strip()
+        if not final_content:
+            final_content = self.default_tempererror_final
+
+        def generator(domain: str, depth: int = chain_depth, final_txt: str = final_content):
+            return template.generator(domain, chain_depth=depth, final_content=final_txt)
+
+        job_label = f"{template.name} (단계 {chain_depth})"
+        self.start_bulk_job(domains, generator, job_label, delete_types=["TXT"])
+
+    def start_bulk_job(
+        self,
+        domains: List[str],
+        generator: Callable[[str], TemplateResult],
+        job_label: str,
+        delete_types: Optional[List[str]] = None,
+    ):
+        """Instantiate and start the bulk DNS worker."""
+        if not domains:
+            return
+        if self.bulk_worker and self.bulk_worker.isRunning():
+            QMessageBox.information(self, "알림", "다른 대량 작업이 진행 중입니다")
+            return
+        self.bulk_job_label = job_label
+        self.bulk_worker = BulkDNSWorker(
+            api_key=self.client.api_key,
+            secret_key=self.client.secret_api_key,
+            domains=domains,
+            generator=generator,
+            job_label=job_label,
+            delete_types=delete_types,
+        )
+        self.bulk_worker.progress.connect(self.on_bulk_job_progress)
+        self.bulk_worker.completed.connect(self.on_bulk_job_completed)
+        self.bulk_worker.failed.connect(self.on_bulk_job_failed)
+        self.bulk_progress_bar.setRange(0, len(domains))
+        self.bulk_progress_bar.setValue(0)
+        self.bulk_status_label.setText(f"{job_label} 진행 중...")
+        self.set_bulk_controls_enabled(False)
+        self.bulk_worker.start()
+
+    def on_bulk_job_progress(self, current: int, total: int, message: str):
+        """Update UI as the worker progresses."""
+        if total <= 0:
+            total = 1
+        self.bulk_progress_bar.setRange(0, total)
+        self.bulk_progress_bar.setValue(current)
+        if message:
+            self.bulk_status_label.setText(message)
+
+    def on_bulk_job_completed(self, results: List[Dict[str, Any]]):
+        """Handle completion of bulk DNS tasks."""
+        self.bulk_worker = None
+        self.set_bulk_controls_enabled(True)
+        success_count = sum(1 for item in results if item.get("success"))
+        failure_count = len(results) - success_count
+        details = []
+        for item in results:
+            domain = item.get("domain")
+            status = "✅" if item.get("success") else "❌"
+            details.append(f"{status} {domain}")
+            backup_path = item.get("backup_path")
+            if backup_path:
+                details.append(f"  백업 파일: {backup_path}")
+            deleted_records = item.get("deleted_records", [])
+            if deleted_records:
+                details.append(f"  삭제된 TXT {len(deleted_records)}개")
+            metadata = item.get("metadata", {})
+            chain = metadata.get("tempererror_chain")
+            if chain:
+                details.append("  Tempererror 체인: " + " → ".join(chain))
+            final_text = metadata.get("final_content")
+            if final_text:
+                details.append(f"  최종 SPF: {final_text}")
+            for record in item.get("created_records", []):
+                details.append(f"  - {record.get('type')} {record.get('name')} -> {record.get('content')}")
+            for error in item.get("errors", []):
+                details.append(f"  오류: {error}")
+        summary = f"{self.bulk_job_label} 완료: {success_count}개 성공, {failure_count}개 실패"
+        self.bulk_progress_bar.setValue(self.bulk_progress_bar.maximum())
+        self.bulk_status_label.setText(summary)
+        if details:
+            self.append_bulk_log("\n".join(details))
+        else:
+            self.append_bulk_log(summary)
+        self.show_toast(summary)
+
+    def on_bulk_job_failed(self, error_message: str):
+        """Handle unrecoverable worker errors."""
+        self.bulk_worker = None
+        self.set_bulk_controls_enabled(True)
+        self.bulk_status_label.setText(f"실패: {error_message}")
+        self.append_bulk_log(f"실패: {error_message}")
+        QMessageBox.critical(self, "대량 작업 실패", error_message)
+
+    def append_bulk_log(self, text: str):
+        """Append a timestamped entry to the bulk log."""
+        if not hasattr(self, "bulk_log"):
+            return
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        entry = f"[{timestamp}]\n{text}\n"
+        self.bulk_log.append(entry)
+        self.bulk_log.ensureCursorVisible()
+
+    def show_toast(self, message: str, duration: int = 3500):
+        """Display a lightweight toast notification."""
+        if self.toast_label:
+            self.toast_label.close()
+            self.toast_label = None
+        toast = QLabel(message, self)
+        toast.setObjectName("toastLabel")
+        toast.setStyleSheet(
+            "background-color: rgba(33, 37, 41, 0.9);"
+            "color: white; padding: 10px 14px; border-radius: 6px;"
+            "font-weight: 500;"
+        )
+        toast.setWordWrap(True)
+        toast.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        toast.setMaximumWidth(380)
+        toast.adjustSize()
+        margin = 20
+        x = max(margin, self.width() - toast.width() - margin)
+        y = max(margin, self.height() - toast.height() - margin)
+        toast.move(x, y)
+        toast.show()
+        self.toast_label = toast
+
+        def hide_toast():
+            toast.close()
+            if self.toast_label is toast:
+                self.toast_label = None
+
+        QTimer.singleShot(duration, hide_toast)
     
     def show_api_status(self):
         """Show API access status dialog"""

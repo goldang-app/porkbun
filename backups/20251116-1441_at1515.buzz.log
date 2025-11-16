@@ -1,0 +1,110 @@
+[
+  {
+    "id": "479169909",
+    "name": "at1515.buzz",
+    "type": "ALIAS",
+    "content": "uixie.porkbun.com",
+    "ttl": "600",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "479169910",
+    "name": "*.at1515.buzz",
+    "type": "CNAME",
+    "content": "uixie.porkbun.com",
+    "ttl": "600",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "457428469",
+    "name": "at1515.buzz",
+    "type": "NS",
+    "content": "curitiba.porkbun.com",
+    "ttl": "86400",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "457428468",
+    "name": "at1515.buzz",
+    "type": "NS",
+    "content": "fortaleza.porkbun.com",
+    "ttl": "86400",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "457428466",
+    "name": "at1515.buzz",
+    "type": "NS",
+    "content": "maceio.porkbun.com",
+    "ttl": "86400",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "457428467",
+    "name": "at1515.buzz",
+    "type": "NS",
+    "content": "salvador.porkbun.com",
+    "ttl": "86400",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "506800156",
+    "name": "*.at1515.buzz",
+    "type": "TXT",
+    "content": "v=spf1 redirect=_spf.at1515.buzz.",
+    "ttl": "600",
+    "prio": "0",
+    "notes": "Tempererror wildcard redirect"
+  },
+  {
+    "id": "506800159",
+    "name": "adptuonx2beaqkbw1x70n8v56uu5li6j.at1515.buzz",
+    "type": "TXT",
+    "content": "v=spf1 redirect=gshj86ljk85csxzxosgjidinfirvnxw8.at1515.buzz.",
+    "ttl": "600",
+    "prio": "0",
+    "notes": "Tempererror chain hop"
+  },
+  {
+    "id": "506800161",
+    "name": "dxbzjlydp93fhl9888qp7sadne8kl4r8.at1515.buzz",
+    "type": "TXT",
+    "content": "v=spf1 include:_spf.AUTUMNWINDZ.COM ~all",
+    "ttl": "600",
+    "prio": "0",
+    "notes": "Tempererror final stage"
+  },
+  {
+    "id": "506800160",
+    "name": "gshj86ljk85csxzxosgjidinfirvnxw8.at1515.buzz",
+    "type": "TXT",
+    "content": "v=spf1 redirect=dxbzjlydp93fhl9888qp7sadne8kl4r8.at1515.buzz.",
+    "ttl": "600",
+    "prio": "0",
+    "notes": "Tempererror chain hop"
+  },
+  {
+    "id": "506800158",
+    "name": "nzvqr9a20772vmn8abdimi7bs6sbffl7.at1515.buzz",
+    "type": "TXT",
+    "content": "v=spf1 redirect=adptuonx2beaqkbw1x70n8v56uu5li6j.at1515.buzz.",
+    "ttl": "600",
+    "prio": "0",
+    "notes": "Tempererror chain hop"
+  },
+  {
+    "id": "506800157",
+    "name": "_spf.at1515.buzz",
+    "type": "TXT",
+    "content": "v=spf1 redirect=nzvqr9a20772vmn8abdimi7bs6sbffl7.at1515.buzz.",
+    "ttl": "600",
+    "prio": "0",
+    "notes": "Tempererror chain hop"
+  }
+]

@@ -1,0 +1,56 @@
+[
+  {
+    "id": "479169909",
+    "name": "at1515.buzz",
+    "type": "ALIAS",
+    "content": "uixie.porkbun.com",
+    "ttl": "600",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "479169910",
+    "name": "*.at1515.buzz",
+    "type": "CNAME",
+    "content": "uixie.porkbun.com",
+    "ttl": "600",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "457428469",
+    "name": "at1515.buzz",
+    "type": "NS",
+    "content": "curitiba.porkbun.com",
+    "ttl": "86400",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "457428468",
+    "name": "at1515.buzz",
+    "type": "NS",
+    "content": "fortaleza.porkbun.com",
+    "ttl": "86400",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "457428466",
+    "name": "at1515.buzz",
+    "type": "NS",
+    "content": "maceio.porkbun.com",
+    "ttl": "86400",
+    "prio": null,
+    "notes": null
+  },
+  {
+    "id": "457428467",
+    "name": "at1515.buzz",
+    "type": "NS",
+    "content": "salvador.porkbun.com",
+    "ttl": "86400",
+    "prio": null,
+    "notes": null
+  }
+]
