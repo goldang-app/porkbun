@@ -36,30 +36,32 @@ class DomainItem(QWidget):
         self._selected = False
         self._base_style = ""
         self._selected_style = ""
+        self.setObjectName("domainItem")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setup_ui()
 
     def setup_ui(self):
         # 프레임 제거하고 단순한 배경색과 호버 효과만 적용
         self._base_style = """
-            DomainItem {
+            #domainItem {
                 background: #ffffff;
                 border: 1px solid #e1e5e9;
                 border-radius: 6px;
                 padding: 4px 8px;
             }
-            DomainItem:hover {
+            #domainItem:hover {
                 background: #f0f8ff;
                 border: 1px solid #007bff;
             }
         """
         self._selected_style = """
-            DomainItem {
+            #domainItem {
                 background: #e7f1ff;
                 border: 2px solid #5b9bff;
                 border-radius: 6px;
                 padding: 3px 7px;
             }
-            DomainItem:hover {
+            #domainItem:hover {
                 background: #d7e9ff;
                 border: 2px solid #1c7cd6;
             }
