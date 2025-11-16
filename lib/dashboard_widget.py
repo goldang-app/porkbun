@@ -271,6 +271,7 @@ class DomainGroup(QFrame):
     domain_dropped = pyqtSignal(str, str)  # domain, group_name
     domain_clicked = pyqtSignal(str)
     group_deleted = pyqtSignal(str)
+    group_renamed = pyqtSignal(str, str)  # old_name, new_name
     domain_removed = pyqtSignal(str)  # Signal when domain is removed from group
     
     def __init__(self, name: str, color: str = "#f0f0f0", parent=None):
@@ -482,9 +483,12 @@ class DomainGroup(QFrame):
         
     def rename_group(self):
         text, ok = QInputDialog.getText(self, "그룹 이름 변경", "새 이름:", text=self.name)
-        if ok and text:
-            self.name = text
-            self.name_label.setText(text)
+        if ok and text and text != self.name:
+            self.group_renamed.emit(self.name, text.strip())
+
+    def apply_name(self, new_name: str):
+        self.name = new_name
+        self.name_label.setText(new_name)
             
     def change_color(self):
         color = QColorDialog.getColor(QColor(self.color), self, "그룹 색상 선택")
@@ -794,6 +798,14 @@ class DashboardWidget(QWidget):
             if widget:
                 widget.deleteLater()
 
+    def _get_group_entry(self, lookup_name: str):
+        if lookup_name in self.groups:
+            return lookup_name, self.groups[lookup_name]
+        for key, group in self.groups.items():
+            if group.name == lookup_name:
+                return key, group
+        return None, None
+
     def _create_default_groups(self):
         """Create default groups when no saved data exists."""
         default_groups = [
@@ -816,11 +828,31 @@ class DashboardWidget(QWidget):
                 self.create_group(text, "#f8f9fa")
                 self.save_config()
                 
+    def handle_group_renamed(self, old_name: str, new_name: str):
+        new_name = (new_name or "").strip()
+        key, group = self._get_group_entry(old_name)
+        if not group:
+            return
+        if not new_name:
+            QMessageBox.warning(self, "이름 변경 실패", "그룹 이름을 비울 수 없습니다.")
+            return
+        _, existing_group = self._get_group_entry(new_name)
+        if existing_group and existing_group is not group:
+            QMessageBox.warning(self, "이름 변경 실패", "같은 이름의 그룹이 이미 있습니다.")
+            return
+        if key and key != new_name:
+            self.groups[new_name] = self.groups.pop(key)
+        elif not key:
+            self.groups[new_name] = group
+        group.apply_name(new_name)
+        self.save_config()
+        
     def create_group(self, name: str, color: str = "#f8f9fa"):
         group = DomainGroup(name, color)
         group.domain_dropped.connect(self.handle_domain_drop)
         group.domain_clicked.connect(self.domain_selected.emit)
         group.group_deleted.connect(self.delete_group)
+        group.group_renamed.connect(self.handle_group_renamed)
         group.domain_removed.connect(self.handle_domain_removed)
         
         self.groups[name] = group
@@ -833,8 +865,8 @@ class DashboardWidget(QWidget):
                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         
         if reply == QMessageBox.StandardButton.Yes:
-            if name in self.groups:
-                group = self.groups[name]
+            key, group = self._get_group_entry(name)
+            if group:
                 
                 # Move domains back to ungrouped
                 for domain in group.domains[:]:
@@ -842,7 +874,8 @@ class DashboardWidget(QWidget):
                     
                 # Remove group
                 group.deleteLater()
-                del self.groups[name]
+                if key and key in self.groups:
+                    del self.groups[key]
                 self.save_config()
                 
     def handle_domain_drop(self, domain: str, group_name: str):
@@ -850,9 +883,10 @@ class DashboardWidget(QWidget):
         self.remove_domain_from_all(domain)
         
         # Add to target group with nameserver status
-        if group_name in self.groups:
+        _, target_group = self._get_group_entry(group_name)
+        if target_group:
             is_porkbun = self.domain_info.get(domain, {}).get("is_porkbun", True)
-            self.groups[group_name].add_domain(domain, is_porkbun)
+            target_group.add_domain(domain, is_porkbun)
             self.save_config()
     
     def handle_domain_removed(self, domain: str):
@@ -1055,12 +1089,12 @@ class DashboardWidget(QWidget):
             
     def load_group_domains(self, group_name: str, domains: List[str]):
         """Load domains into a group"""
-        if group_name in self.groups:
+        key, group = self._get_group_entry(group_name)
+        if group:
             for domain in domains:
-                # Only add if domain exists in all_domains
                 if not self.all_domains or domain in self.all_domains:
                     is_porkbun = self.domain_info.get(domain, {}).get("is_porkbun", True)
-                    self.groups[group_name].add_domain(domain, is_porkbun)
+                    group.add_domain(domain, is_porkbun)
     
     def load_config(self):
         """Load dashboard configuration for the current profile."""
